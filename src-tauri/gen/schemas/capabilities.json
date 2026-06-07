@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for the Socrates desktop app","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-set-always-on-top","core:window:allow-show","core:window:allow-hide","core:window:allow-set-focus","core:window:allow-center","shell:allow-open","store:default","deep-link:default"]}}
