@@ -13,24 +13,45 @@ use enigo::{
 use std::io::Cursor;
 use xcap::Monitor;
 
-/// Capture the primary monitor and return it as a base64-encoded PNG string.
+/// Capture the primary monitor, downscale it, and return it as a base64 JPEG.
+///
+/// Full-resolution PNG screenshots (esp. on Retina/4K) exceed Vercel's 4.5 MB
+/// request limit and upload slowly. We cap the longest side at 1366 px and
+/// encode as JPEG (q75): ~150-400 KB instead of multiple MB, with text still
+/// perfectly legible for the vision model.
 #[tauri::command]
 fn capture_screen() -> Result<String, String> {
     let monitors = Monitor::all().map_err(|e| format!("monitor error: {e}"))?;
-    // Prefer the primary monitor; fall back to the first one.
     let monitor = monitors
         .iter()
         .find(|m| m.is_primary().unwrap_or(false))
         .or_else(|| monitors.first())
         .ok_or_else(|| "no monitor found".to_string())?;
 
-    let image = monitor
+    let rgba = monitor
         .capture_image()
         .map_err(|e| format!("capture error: {e}"))?;
 
+    let dynamic = image::DynamicImage::ImageRgba8(rgba);
+    const MAX_SIDE: u32 = 1366;
+    let (w, h) = (dynamic.width(), dynamic.height());
+    let resized = if w.max(h) > MAX_SIDE {
+        let scale = MAX_SIDE as f32 / w.max(h) as f32;
+        dynamic.resize(
+            (w as f32 * scale) as u32,
+            (h as f32 * scale) as u32,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        dynamic
+    };
+
+    // JPEG has no alpha channel — convert RGBA → RGB first.
+    let rgb = resized.to_rgb8();
     let mut buf = Cursor::new(Vec::new());
-    image
-        .write_to(&mut buf, image::ImageFormat::Png)
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 75);
+    encoder
+        .encode_image(&rgb)
         .map_err(|e| format!("encode error: {e}"))?;
 
     Ok(general_purpose::STANDARD.encode(buf.into_inner()))

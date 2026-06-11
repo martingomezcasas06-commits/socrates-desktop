@@ -66,6 +66,7 @@ export default function CoachingPage({
   const [error, setError] = useState("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autonomousRef = useRef(false);
+  const analyzingRef = useRef(false);
   const videoRef  = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -83,14 +84,27 @@ export default function CoachingPage({
     canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0);
-    return canvas.toDataURL("image/png").split(",")[1];
+    return canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
   }
 
   // ── Advisory mode loop ────────────────────────────────────────────────────
   const analyzeScreen = useCallback(async () => {
-    if (mode === "autonomous") return; // don't interrupt
+    if (mode === "autonomous") return;     // don't interrupt
+    if (analyzingRef.current) return;       // skip if a call is already in flight
+    analyzingRef.current = true;
     try {
       const screenshot = await captureScreen();
+      if (!screenshot || screenshot.length < 100) {
+        setError(
+          IS_TAURI
+            ? "Couldn't capture your screen. Enable Screen Recording for Socrates in System Settings → Privacy & Security, then restart the app."
+            : "Couldn't capture your screen. Try restarting the session."
+        );
+        return;
+      }
+      setError("");
+      setGuidance((g) => g || "Looking at your screen…");
+
       const res = await fetch(`${API_URL}/api/coaching/analyze`, {
         method: "POST",
         headers: {
@@ -99,14 +113,17 @@ export default function CoachingPage({
         },
         body: JSON.stringify({ screenshot, tool }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError(`Socrates couldn't analyze the screen (HTTP ${res.status}).`);
+        return;
+      }
       const data: AnalysisResult = await res.json();
       setGuidance(data.guidance);
-      if (data.stuck && data.offer) {
-        setOffer(data.offer);
-      }
+      if (data.stuck && data.offer) setOffer(data.offer);
     } catch (e) {
-      console.error("analyze error", e);
+      setError(`Connection problem: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      analyzingRef.current = false;
     }
   }, [mode, tool, session.access_token]);
 
