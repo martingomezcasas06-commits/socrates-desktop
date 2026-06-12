@@ -67,6 +67,12 @@ export default function CoachingPage({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autonomousRef = useRef(false);
   const analyzingRef = useRef(false);
+
+  // Inline Q&A while coaching — ask about whatever is on screen right now
+  const [qa, setQa] = useState<{ q: string; a: string | null }[]>([]);
+  const [askInput, setAskInput] = useState("");
+  const [asking, setAsking] = useState(false);
+  const guidanceScrollRef = useRef<HTMLDivElement>(null);
   const videoRef  = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -270,6 +276,38 @@ export default function CoachingPage({
     setOffer(null);
   }
 
+  // ── Inline question while coaching ────────────────────────────────────────
+  async function askQuestion(e: React.FormEvent) {
+    e.preventDefault();
+    const q = askInput.trim();
+    if (!q || asking) return;
+    setAskInput("");
+    setAsking(true);
+    setQa((prev) => [...prev, { q, a: null }]);
+    try {
+      const screenshot = await captureScreen();
+      const res = await fetch(`${API_URL}/api/coaching/analyze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ screenshot, tool, question: q }),
+      });
+      const data: AnalysisResult = await res.json();
+      setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: data.guidance } : item)));
+    } catch {
+      setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: "Sorry — couldn't reach Socrates. Try again." } : item)));
+    }
+    setAsking(false);
+  }
+
+  // Keep the feed scrolled to the latest answer
+  useEffect(() => {
+    const el = guidanceScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [qa]);
+
   const [tab, setTab] = useState<"coaching" | "chat">("coaching");
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -339,12 +377,42 @@ export default function CoachingPage({
         </div>
       )}
 
-      {/* Advisory guidance */}
+      {/* Advisory guidance + inline Q&A */}
       {mode === "advisory" && (
-        <div style={styles.guidance}>
-          <div style={styles.guidanceLabel}>◎ Socrates is watching</div>
-          <p style={styles.guidanceText}>{guidance || "Analysing your screen…"}</p>
-        </div>
+        <>
+          <div ref={guidanceScrollRef} style={styles.guidance}>
+            <div style={styles.guidanceLabel}>◎ Socrates is watching</div>
+            <p style={styles.guidanceText}>{guidance || "Analysing your screen…"}</p>
+
+            {qa.length > 0 && (
+              <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+                {qa.map((item, i) => (
+                  <div key={i}>
+                    <div style={styles.qBubble}>{item.q}</div>
+                    <div style={styles.aText}>
+                      {item.a ?? <span style={{ opacity: 0.5, fontStyle: "italic" }}>looking at your screen…</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Ask box — always reachable while the floating window sits over your work */}
+          <form onSubmit={askQuestion} style={styles.askRow}>
+            <input
+              value={askInput}
+              onChange={(e) => setAskInput(e.target.value)}
+              placeholder="Ask about what's on your screen…"
+              style={styles.askInput}
+            />
+            <button
+              type="submit"
+              disabled={!askInput.trim() || asking}
+              style={{ ...styles.askBtn, opacity: !askInput.trim() || asking ? 0.5 : 1 }}
+            >↑</button>
+          </form>
+        </>
       )}
 
       {/* Autonomous mode overlay */}
@@ -543,6 +611,46 @@ const styles: Record<string, React.CSSProperties> = {
   guidance: { flex: 1, overflowY: "auto", padding: 16 },
   guidanceLabel: { fontSize: 10, fontWeight: 700, color: "#6366f1", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 },
   guidanceText: { fontSize: 13, color: "#cbd5e1", lineHeight: 1.8, margin: 0, whiteSpace: "pre-wrap" },
+  qBubble: {
+    fontSize: 12,
+    color: "#e0e7ff",
+    background: "#312e81",
+    borderRadius: "10px 10px 2px 10px",
+    padding: "7px 11px",
+    marginLeft: "auto",
+    maxWidth: "85%",
+    width: "fit-content",
+    lineHeight: 1.5,
+  },
+  aText: { fontSize: 12, color: "#cbd5e1", lineHeight: 1.7, marginTop: 6, whiteSpace: "pre-wrap" },
+  askRow: {
+    display: "flex",
+    gap: 6,
+    padding: "8px 12px",
+    borderTop: "1px solid #1e293b",
+    flexShrink: 0,
+  },
+  askInput: {
+    flex: 1,
+    background: "#1e293b",
+    border: "1px solid #334155",
+    borderRadius: 7,
+    padding: "7px 10px",
+    color: "#f1f5f9",
+    fontSize: 12,
+    outline: "none",
+  },
+  askBtn: {
+    background: "#6366f1",
+    color: "#fff",
+    border: "none",
+    borderRadius: 7,
+    width: 30,
+    height: 30,
+    fontSize: 14,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
   autonomousWrap: { flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12 },
   autonomousHeader: {
     display: "flex",
@@ -592,7 +700,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   offerBox: {
     position: "absolute",
-    bottom: 14,
+    bottom: 62,
     left: 14,
     right: 14,
     background: "#1e293b",
