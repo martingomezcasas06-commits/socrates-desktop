@@ -292,7 +292,13 @@ export default function CoachingPage({
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ screenshot, tool, question: q }),
+        body: JSON.stringify({
+          screenshot,
+          tool,
+          question: q,
+          // Prior answered Q&A pairs so follow-up questions have context
+          history: qa.filter((t): t is { q: string; a: string } => t.a !== null).slice(-6),
+        }),
       });
       const data: AnalysisResult = await res.json();
       setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: data.guidance } : item)));
