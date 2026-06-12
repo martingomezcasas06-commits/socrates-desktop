@@ -346,7 +346,6 @@ export default function CoachingPage({
             color: "#475569", fontSize: 14, padding: "0 12px",
             flexShrink: 0,
           }}
-          title="Pop out"
         >⊞</button>
       </div>
 
