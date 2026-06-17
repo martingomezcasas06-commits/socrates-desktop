@@ -279,10 +279,15 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     setAsking(false);
   }
 
+  // Sticky auto-scroll: follow new guidance/answers only when you're already at the
+  // bottom, so a 5s advisory tick can't yank you while you're reading further up.
+  const atBottomRef = useRef(true);
   useEffect(() => {
     const el = guidanceScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [qa, guidance]);
+    if (!el || !atBottomRef.current) return;
+    const id = requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    return () => cancelAnimationFrame(id);
+  }, [qa, guidance, asking]);
 
   const [expanded, setExpanded] = useState(false);
   async function toggleSize() {
@@ -404,7 +409,11 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
                   <div className="guide-head"><Icon name="target" /><div className="gh-t">Guidance<span className="mono">{tool || "live coaching"}</span></div>
                     <button className="btn btn-danger btn-sm" style={{ marginLeft: "auto" }} onClick={stopSession}><Icon name="stop" /> End session</button>
                   </div>
-                  <div className="guide-feed" ref={guidanceScrollRef}>
+                  <div className="guide-feed" ref={guidanceScrollRef}
+                    onScroll={(e) => {
+                      const el = e.currentTarget;
+                      atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+                    }}>
                     {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error}</div>}
                     {summary && (
                       <div className="offer-card" style={{ background: "var(--green-soft)", borderColor: "rgba(79,178,134,0.4)" }}>
