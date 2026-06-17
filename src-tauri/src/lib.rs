@@ -15,7 +15,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
 };
 use xcap::Monitor;
 
@@ -158,49 +158,45 @@ fn execute_action(
     }
 }
 
-/// Make a window able to float *over another app's native-fullscreen Space*.
+/// Configure the (panel-ified) main window to float **over another app's native-fullscreen
+/// Space** as a non-activating overlay — or restore it to a normal window.
 ///
-/// Tauri's `set_visible_on_all_workspaces` only sets `canJoinAllSpaces`, which is not
-/// enough for native fullscreen — the window also needs `fullScreenAuxiliary` in its
-/// NSWindow collection behavior, plus a floating window level. We set both via objc2.
+/// A plain NSWindow can't draw over another app's fullscreen even with `fullScreenAuxiliary`,
+/// because showing/focusing it activates our app and switches away from the fullscreen Space.
+/// The window is converted to a non-activating NSPanel (see `to_panel` in setup); here we set
+/// the level, collection behaviour and style mask so it appears in place without stealing focus.
 #[cfg(target_os = "macos")]
-fn apply_overlay(win: &WebviewWindow, enable: bool) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    let Ok(ptr) = win.ns_window() else { return };
-    let ns_window = ptr as *mut AnyObject;
-    unsafe {
-        // CanJoinAllSpaces (1<<0) | FullScreenAuxiliary (1<<8) | Stationary (1<<4) when enabled.
-        let behavior: usize = if enable { (1 << 0) | (1 << 8) | (1 << 4) } else { 0 };
-        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-        // NSScreenSaverWindowLevel (1000) sits above a fullscreen app's content; normal (0) to restore.
-        let level: isize = if enable { 1000 } else { 0 };
-        let _: () = msg_send![ns_window, setLevel: level];
-    }
-}
-
-/// Order the window to the front of the *current* Space without activating the app —
-/// so it appears over a fullscreen app instead of switching away from it.
-#[cfg(target_os = "macos")]
-fn order_front_no_activate(win: &WebviewWindow) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    let Ok(ptr) = win.ns_window() else { return };
-    let ns_window = ptr as *mut AnyObject;
-    unsafe {
-        let _: () = msg_send![ns_window, orderFrontRegardless];
+fn overlay_panel(app: &AppHandle, enable: bool) {
+    use tauri_nspanel::cocoa::appkit::NSWindowCollectionBehavior as CB;
+    use tauri_nspanel::ManagerExt;
+    let Ok(panel) = app.get_webview_panel("main") else { return };
+    // NSWindowStyleMask: Titled(1) | Closable(2) | Miniaturizable(4) | Resizable(8) | NonactivatingPanel(128)
+    if enable {
+        panel.set_style_mask(1 | 2 | 8 | 128);
+        panel.set_level(1000); // NSScreenSaverWindowLevel — above a fullscreen app's content
+        panel.set_collection_behaviour(
+            CB::NSWindowCollectionBehaviorCanJoinAllSpaces
+                | CB::NSWindowCollectionBehaviorFullScreenAuxiliary
+                | CB::NSWindowCollectionBehaviorStationary,
+        );
+        panel.set_floating_panel(true);
+        panel.set_hides_on_deactivate(false);
+        panel.show(); // order_front_regardless — appears without activating the app
+    } else {
+        panel.set_style_mask(1 | 2 | 4 | 8); // normal window chrome
+        panel.set_level(0);
+        panel.set_collection_behaviour(CB::empty());
+        panel.set_floating_panel(false);
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn apply_overlay(_win: &WebviewWindow, _enable: bool) {}
-#[cfg(not(target_os = "macos"))]
-fn order_front_no_activate(_win: &WebviewWindow) {}
+fn overlay_panel(_app: &AppHandle, _enable: bool) {}
 
-/// Frontend hook (called from enterFloating/exitFloating) to toggle fullscreen overlay.
+/// Frontend hook (called from enterFloating/exitFloating) to toggle the fullscreen overlay.
 #[tauri::command]
-fn set_fullscreen_overlay(window: WebviewWindow, enable: bool) {
-    apply_overlay(&window, enable);
+fn set_fullscreen_overlay(app: AppHandle, enable: bool) {
+    overlay_panel(&app, enable);
 }
 
 /// Park the companion window top-right, just under the menu bar, near the tray icon.
@@ -234,19 +230,23 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
-    let up = win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false);
-    if up {
+    if win.is_visible().unwrap_or(false) {
+        // Already up → tuck it away (panel order_out keeps it non-activating).
+        #[cfg(target_os = "macos")]
+        {
+            use tauri_nspanel::ManagerExt;
+            if let Ok(panel) = app.get_webview_panel("main") {
+                panel.order_out(None);
+                return;
+            }
+        }
         let _ = win.hide();
         return;
     }
-    let _ = win.set_always_on_top(true);
-    let _ = win.set_visible_on_all_workspaces(true);
-    apply_overlay(&win, true);
+    // Show as a compact floating companion, top-right, over everything (incl. fullscreen).
+    let _ = win.set_size(LogicalSize::new(440.0, 680.0));
     position_companion(&win, anchor);
-    let _ = win.show();
-    // Bring it into the current (possibly fullscreen) Space WITHOUT activating the app,
-    // which would otherwise bounce us out of the fullscreen app.
-    order_front_no_activate(&win);
+    overlay_panel(app, true);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -255,12 +255,27 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_nspanel::init())
         .invoke_handler(tauri::generate_handler![
             capture_screen,
             execute_action,
             set_fullscreen_overlay
         ])
         .setup(|app| {
+            // Convert the main window into a non-activating NSPanel so it can overlay other
+            // apps' fullscreen Spaces during coaching. By default it behaves like a normal
+            // window (overlay level/behaviour are only applied while a session is active).
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_nspanel::WebviewWindowExt;
+                if let Some(win) = app.get_webview_window("main") {
+                    if let Ok(panel) = win.to_panel() {
+                        // NSPanel defaults to hiding on app deactivation — keep it visible.
+                        panel.set_hides_on_deactivate(false);
+                    }
+                }
+            }
+
             // Menu-bar (tray) companion — always reachable, even over fullscreen apps.
             let toggle = MenuItem::with_id(app, "toggle", "Show / Hide Socrates", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Socrates", true, None::<&str>)?;

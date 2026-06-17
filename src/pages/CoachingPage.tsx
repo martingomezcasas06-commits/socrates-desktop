@@ -37,12 +37,9 @@ async function enterFloating() {
       const monW = mon.size.width / scale;
       await win.setPosition(new LogicalPosition(Math.max(12, monW - FLOAT_W - 24), 56));
     }
-    await win.setAlwaysOnTop(true);
-    // Float above other apps' fullscreen Spaces too, so coaching is never buried.
-    try { await win.setVisibleOnAllWorkspaces(true); } catch { /* older build */ }
+    // Turn the window into a non-activating panel that floats over everything — including
+    // another app's native fullscreen. (Rust orders it front without activating our app.)
     try { await tauriInvoke("set_fullscreen_overlay", { enable: true }); } catch { /* older build */ }
-    await win.show();
-    await win.setFocus();
   } catch (e) { console.error("enterFloating", e); }
 }
 
@@ -52,8 +49,7 @@ async function exitFloating() {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     const win = getCurrentWindow();
-    await win.setAlwaysOnTop(false);
-    try { await win.setVisibleOnAllWorkspaces(false); } catch { /* older build */ }
+    // Restore a normal window (drops overlay level/behaviour + non-activating style).
     try { await tauriInvoke("set_fullscreen_overlay", { enable: false }); } catch { /* older build */ }
     await win.setSize(new LogicalSize(980, 700));
     await win.center();
