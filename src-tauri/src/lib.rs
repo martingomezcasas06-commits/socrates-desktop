@@ -22,6 +22,37 @@ use xcap::Monitor;
 /// Longest screenshot side sent to the vision model (shared by capture + coord scaling).
 const MAX_SIDE: u32 = 1366;
 
+// macOS Screen Recording permission (CoreGraphics). Without it, screen captures come back
+// as just the desktop wallpaper with no windows — so we check and prompt explicitly.
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+/// Whether the app currently has macOS Screen Recording permission.
+#[tauri::command]
+fn screen_recording_allowed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// Trigger the macOS Screen Recording permission prompt (and register the app in the list).
+#[tauri::command]
+fn request_screen_recording() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let _ = CGRequestScreenCaptureAccess();
+    }
+}
+
 /// The primary monitor (falls back to the first).
 fn primary_monitor() -> Result<Monitor, String> {
     let monitors = Monitor::all().map_err(|e| format!("monitor error: {e}"))?;
@@ -259,7 +290,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             capture_screen,
             execute_action,
-            set_fullscreen_overlay
+            set_fullscreen_overlay,
+            screen_recording_allowed,
+            request_screen_recording
         ])
         .setup(|app| {
             // Convert the main window into a non-activating NSPanel so it can overlay other
@@ -273,6 +306,10 @@ pub fn run() {
                         // NSPanel defaults to hiding on app deactivation — keep it visible.
                         panel.set_hides_on_deactivate(false);
                     }
+                }
+                // Register the app in the Screen Recording list / prompt on first launch.
+                unsafe {
+                    let _ = CGRequestScreenCaptureAccess();
                 }
             }
 

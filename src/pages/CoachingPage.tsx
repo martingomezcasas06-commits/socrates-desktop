@@ -151,6 +151,18 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   async function startAdvisory() {
     if (!tool.trim()) { setError("Please enter the tool name first."); return; }
     setError("");
+    if (IS_TAURI) {
+      // Screen Recording permission is required to see your screen. If it's missing,
+      // macOS silently returns only the desktop wallpaper — so check first and guide.
+      try {
+        const ok = await tauriInvoke<boolean>("screen_recording_allowed");
+        if (!ok) {
+          await tauriInvoke("request_screen_recording");
+          setError("Socrates needs Screen Recording permission to see your screen. Enable “Socrates” in System Settings ▸ Privacy & Security ▸ Screen Recording, then fully quit and reopen the app.");
+          return;
+        }
+      } catch { /* older build without the check */ }
+    }
     if (!IS_TAURI) {
       if (!navigator.mediaDevices?.getDisplayMedia) { setError("Screen sharing not supported. Use Chrome or Edge."); return; }
       try {
