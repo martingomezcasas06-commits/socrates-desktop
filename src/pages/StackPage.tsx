@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import Icon from "../Icon";
 
 type Rec = {
   id: string;
@@ -10,20 +12,36 @@ type Rec = {
   estimated_impact: "high" | "medium" | "low";
 };
 
-const IMPACT = {
-  high:   { label: "High impact", color: "#15803d", bg: "#14532d33" },
-  medium: { label: "Medium impact", color: "#a16207", bg: "#78350f33" },
-  low:    { label: "Low impact", color: "#64748b", bg: "#1e293b" },
-};
+/** Stable per-tool gradient derived from the tool name (real tools have no brand colors). */
+function toolHue(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+function toolGradient(name: string): string {
+  const H = toolHue(name);
+  return `linear-gradient(135deg, hsl(${H} 60% 45%), hsl(${H} 65% 30%))`;
+}
 
-export default function StackPage({ onStartCoaching }: { onStartCoaching: (tool: string) => void }) {
+export default function StackPage({
+  session,
+  onStartCoaching,
+}: {
+  session: Session;
+  onStartCoaching: (tool: string) => void;
+}) {
   const [recs, setRecs] = useState<Rec[]>([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState("All");
 
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) {
+        setLoading(false);
+        return;
+      }
 
       // Get the Socrates user profile to find their user_id
       const { data: profile } = await supabase
@@ -32,7 +50,10 @@ export default function StackPage({ onStartCoaching }: { onStartCoaching: (tool:
         .eq("auth_id", user.id)
         .single();
 
-      if (!profile) return;
+      if (!profile) {
+        setLoading(false);
+        return;
+      }
 
       const { data } = await supabase
         .from("recommendations")
@@ -44,108 +65,170 @@ export default function StackPage({ onStartCoaching }: { onStartCoaching: (tool:
       setRecs((data ?? []) as Rec[]);
       setLoading(false);
     }
+    // session.access_token is available for any authed backend fetch (matches ChatPage pattern):
+    //   Authorization: `Bearer ${session.access_token}`
+    void session;
     load();
-  }, []);
+  }, [session]);
 
-  if (loading) return <div style={styles.center}>Loading your stack…</div>;
+  // Static-ish pill filters: "All" plus the first few distinct categories from the user's stack.
+  const filters = useMemo(() => {
+    const cats: string[] = [];
+    for (const r of recs) {
+      if (r.tool_category && !cats.includes(r.tool_category)) cats.push(r.tool_category);
+    }
+    return ["All", ...cats.slice(0, 4)];
+  }, [recs]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return recs.filter((r) => {
+      const matchesFilter = activeFilter === "All" || r.tool_category === activeFilter;
+      const matchesQuery =
+        !q ||
+        r.tool_name.toLowerCase().includes(q) ||
+        r.tool_category.toLowerCase().includes(q) ||
+        r.use_case.toLowerCase().includes(q);
+      return matchesFilter && matchesQuery;
+    });
+  }, [recs, query, activeFilter]);
+
+  if (loading) {
+    return (
+      <>
+        <div className="head">
+          <div className="titles">
+            <h1>Your <span className="ital">stack</span></h1>
+            <div className="sub">Loading your tools…</div>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   if (recs.length === 0) {
     return (
-      <div style={styles.center}>
-        <div style={{ fontSize: 28, marginBottom: 10 }}>⏳</div>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>No approved tools yet</div>
-        <div style={{ fontSize: 12, color: "#64748b" }}>Check the web app — your manager may be reviewing recommendations.</div>
+      <div className="scroll">
+        <div className="head">
+          <div className="titles">
+            <h1>Your <span className="ital">stack</span></h1>
+            <div className="sub">Approved tools will appear here</div>
+          </div>
+        </div>
+        <div className="empty-rich anim">
+          <div className="empty-ill">
+            <div className="ring" />
+            <div className="core"><Icon name="stack" /></div>
+          </div>
+          <h3>No tools approved <span className="ital">yet</span></h3>
+          <p>
+            Once you finish your onboarding interview and your manager signs off, your tailored
+            AI toolkit lands right here.
+          </p>
+          <div className="empty-steps">
+            <div className="empty-step">
+              <span className="n">01</span>
+              <span className="tx"><b>Finish onboarding</b>A ~30-min chat about how you work.</span>
+            </div>
+            <div className="empty-step">
+              <span className="n">02</span>
+              <span className="tx"><b>Manager review</b>Socrates routes recommendations for approval.</span>
+            </div>
+            <div className="empty-step">
+              <span className="n">03</span>
+              <span className="tx"><b>Start using them</b>Approved tools show up here with coaching.</span>
+            </div>
+          </div>
+          <a
+            className="btn btn-soft btn-block"
+            href="https://socrates.app"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Icon name="open" /> Open the Socrates web app
+          </a>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={styles.list}>
-      {recs.map((rec) => {
-        const imp = IMPACT[rec.estimated_impact];
-        return (
-          <div key={rec.id} style={styles.card}>
-            <div style={styles.cardHeader}>
-              <div>
-                <div style={styles.toolName}>{rec.tool_name}</div>
-                <div style={styles.category}>{rec.tool_category}</div>
-              </div>
-              <span style={{ ...styles.badge, background: imp.bg, color: imp.color }}>
-                {imp.label}
-              </span>
-            </div>
-
-            <p style={styles.useCase}>{rec.use_case}</p>
-
-            <div style={styles.actions}>
-              <button
-                onClick={() => onStartCoaching(rec.tool_name)}
-                style={styles.coachBtn}
-              >
-                ◎ Coach me on this
-              </button>
-              {rec.tool_url && (
-                <a href={rec.tool_url} target="_blank" rel="noreferrer" style={styles.openBtn}>
-                  Open ↗
-                </a>
-              )}
-            </div>
+    <>
+      <div className="head">
+        <div className="titles">
+          <h1>Your <span className="ital">stack</span></h1>
+          <div className="sub">{recs.length} tools approved for you · ready to use</div>
+        </div>
+        <div className="tools">
+          <div className="search">
+            <Icon name="search" />
+            <input
+              placeholder="Search tools…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
-        );
-      })}
-    </div>
+        </div>
+      </div>
+
+      <div className="head" style={{ paddingTop: 0, paddingBottom: 10 }}>
+        <div className="pill-filter">
+          {filters.map((f) => (
+            <button
+              key={f}
+              className={`pill${activeFilter === f ? " active" : ""}`}
+              onClick={() => setActiveFilter(f)}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="scroll">
+        <div className="stack-grid anim">
+          {visible.map((rec) => (
+            <div key={rec.id} className="tool-card">
+              <div className="tool-top">
+                <div
+                  className="tool-logo"
+                  style={{ background: toolGradient(rec.tool_name) }}
+                >
+                  {rec.tool_name.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="tt">
+                  <div className="nm">{rec.tool_name}</div>
+                  <div className="ct">{rec.tool_category}</div>
+                </div>
+                <span className="badge approved"><span className="dot" />Approved</span>
+              </div>
+              <div className="tool-use">{rec.use_case}</div>
+              <div className="tool-actions">
+                {rec.tool_url ? (
+                  <a
+                    className="btn btn-soft btn-sm"
+                    href={rec.tool_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Icon name="open" /> Open
+                  </a>
+                ) : (
+                  <button className="btn btn-soft btn-sm" disabled>
+                    <Icon name="open" /> Open
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => onStartCoaching(rec.tool_name)}
+                >
+                  <Icon name="coach" /> Coach me
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  list: { overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 },
-  card: {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: 10,
-    padding: 14,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-  },
-  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
-  toolName: { fontSize: 14, fontWeight: 700, color: "#f1f5f9" },
-  category: { fontSize: 11, color: "#64748b", marginTop: 2 },
-  badge: { fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap", flexShrink: 0 },
-  useCase: { fontSize: 12, color: "#94a3b8", lineHeight: 1.6, margin: 0 },
-  actions: { display: "flex", gap: 8 },
-  coachBtn: {
-    flex: 1,
-    background: "#6366f1",
-    color: "#fff",
-    border: "none",
-    borderRadius: 7,
-    padding: "8px 10px",
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  openBtn: {
-    background: "#0f172a",
-    color: "#94a3b8",
-    border: "1px solid #334155",
-    borderRadius: 7,
-    padding: "8px 12px",
-    fontSize: 12,
-    fontWeight: 500,
-    textDecoration: "none",
-    display: "flex",
-    alignItems: "center",
-  },
-  center: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#94a3b8",
-    fontSize: 13,
-    textAlign: "center",
-    padding: 24,
-  },
-};

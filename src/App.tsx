@@ -8,9 +8,19 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import StackPage from "./pages/StackPage";
 import ChatPage from "./pages/ChatPage";
 import CoachingPage from "./pages/CoachingPage";
-import "./App.css";
+import Icon from "./Icon";
 
 export type Page = "stack" | "chat" | "coaching";
+
+function initialsOf(s: string): string {
+  const base = s.includes("@") ? s.split("@")[0].replace(/[._-]/g, " ") : s;
+  const p = base.trim().split(/\s+/);
+  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "S";
+}
+function displayName(s: string): string {
+  if (!s.includes("@")) return s;
+  return s.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export default function App() {
   const [session, setSession]         = useState<Session | null>(null);
@@ -87,8 +97,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <div style={styles.center}>
-        <div style={styles.avatar}>S</div>
+      <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "var(--bg)" }}>
+        <span className="brand-mark" style={{ width: 40, height: 40 }} />
       </div>
     );
   }
@@ -98,111 +108,46 @@ export default function App() {
   // Password-reset deep link was clicked — show the set-new-password screen
   if (recovering) return <ResetPasswordPage />;
 
-  return (
-    <div style={styles.shell}>
-      {/* Nav */}
-      <nav style={styles.nav}>
-        <div style={styles.brand}>
-          <div style={styles.avatar}>S</div>
-          <span style={styles.brandName}>Socrates</span>
-        </div>
-        <div style={styles.navLinks}>
-          <NavBtn label="Stack"    active={page === "stack"}    onClick={() => setPage("stack")} />
-          <NavBtn label="Chat"     active={page === "chat"}     onClick={() => setPage("chat")} />
-          <NavBtn label="Coaching" active={page === "coaching"} onClick={() => setPage("coaching")} />
-          <button
-            onClick={() => supabase.auth.signOut()}
-            style={styles.signOutBtn}
-            title="Sign out"
-          >
-            ↩
-          </button>
-        </div>
-      </nav>
+  const email = session.user.email ?? "";
+  const name = (session.user.user_metadata?.name as string) || displayName(email);
 
-      {/* Page */}
-      <main style={styles.main}>
-        {page === "stack"    && <StackPage onStartCoaching={startCoaching} />}
-        {page === "chat"     && <ChatPage session={session} />}
+  return (
+    <div className="app-body">
+      <aside className="rail">
+        <div className="rail-brand"><span className="brand-mark" /><span className="nm">Socrates</span></div>
+        <div className="rail-section"><span>Workspace</span></div>
+        <nav className="rail-nav">
+          <RailLink id="stack" label="Stack" icon="stack" page={page} onNav={setPage} />
+          <RailLink id="chat" label="Chat" icon="chat" page={page} onNav={setPage} />
+          <RailLink id="coaching" label="Coaching" icon="coach" page={page} onNav={setPage} pip={page !== "coaching"} />
+        </nav>
+        <div className="rail-foot">
+          <div className="rail-user">
+            <div className="avatar">{initialsOf(name || email)}</div>
+            <div className="meta">
+              <div className="nm">{name}</div>
+              <div className="rl">{email}</div>
+            </div>
+            <button className="out" onClick={() => supabase.auth.signOut()} title="Sign out"><Icon name="logout" /></button>
+          </div>
+        </div>
+      </aside>
+
+      <div className="content">
+        {page === "stack" && <StackPage session={session} onStartCoaching={startCoaching} />}
+        {page === "chat" && <ChatPage session={session} />}
         {page === "coaching" && <CoachingPage session={session} initialTool={coachingTool} />}
-      </main>
+      </div>
     </div>
   );
 }
 
-function NavBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function RailLink({ id, label, icon, page, onNav, pip }: {
+  id: Page; label: string; icon: string; page: Page; onNav: (p: Page) => void; pip?: boolean;
+}) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        ...styles.navBtn,
-        background: active ? "#6366f1" : "transparent",
-        color: active ? "#fff" : "#94a3b8",
-      }}
-    >
-      {label}
+    <button className={`rail-link${page === id ? " active" : ""}`} onClick={() => onNav(id)}>
+      <Icon name={icon} /><span>{label}</span>{pip && <span className="pip" />}
     </button>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  shell: {
-    display: "flex",
-    flexDirection: "column",
-    height: "100vh",
-    background: "#0f172a",
-    color: "#f1f5f9",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  },
-  nav: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "10px 14px",
-    borderBottom: "1px solid #1e293b",
-    flexShrink: 0,
-  },
-  brand: { display: "flex", alignItems: "center", gap: 8 },
-  brandName: { fontSize: 14, fontWeight: 700, color: "#f1f5f9" },
-  avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: "50%",
-    background: "linear-gradient(135deg, #6366f1 0%, #818cf8 100%)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#fff",
-    flexShrink: 0,
-  },
-  navLinks: { display: "flex", gap: 4 },
-  signOutBtn: {
-    border: "none",
-    borderRadius: 6,
-    padding: "5px 8px",
-    fontSize: 14,
-    cursor: "pointer",
-    background: "transparent",
-    color: "#475569",
-    marginLeft: 4,
-  },
-  navBtn: {
-    border: "none",
-    borderRadius: 6,
-    padding: "5px 10px",
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-    transition: "background 120ms",
-  },
-  main: { flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" },
-  center: {
-    height: "100vh",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#0f172a",
-  },
-};
