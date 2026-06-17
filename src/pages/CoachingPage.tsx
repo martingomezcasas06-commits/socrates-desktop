@@ -40,6 +40,7 @@ async function enterFloating() {
     await win.setAlwaysOnTop(true);
     // Float above other apps' fullscreen Spaces too, so coaching is never buried.
     try { await win.setVisibleOnAllWorkspaces(true); } catch { /* older build */ }
+    try { await tauriInvoke("set_fullscreen_overlay", { enable: true }); } catch { /* older build */ }
     await win.show();
     await win.setFocus();
   } catch (e) { console.error("enterFloating", e); }
@@ -53,6 +54,7 @@ async function exitFloating() {
     const win = getCurrentWindow();
     await win.setAlwaysOnTop(false);
     try { await win.setVisibleOnAllWorkspaces(false); } catch { /* older build */ }
+    try { await tauriInvoke("set_fullscreen_overlay", { enable: false }); } catch { /* older build */ }
     await win.setSize(new LogicalSize(980, 700));
     await win.center();
   } catch (e) { console.error("exitFloating", e); }

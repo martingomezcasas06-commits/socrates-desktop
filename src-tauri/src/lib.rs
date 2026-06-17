@@ -158,6 +158,36 @@ fn execute_action(
     }
 }
 
+/// Make a window able to float *over another app's native-fullscreen Space*.
+///
+/// Tauri's `set_visible_on_all_workspaces` only sets `canJoinAllSpaces`, which is not
+/// enough for native fullscreen — the window also needs `fullScreenAuxiliary` in its
+/// NSWindow collection behavior, plus a floating window level. We set both via objc2.
+#[cfg(target_os = "macos")]
+fn apply_overlay(win: &WebviewWindow, enable: bool) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    let Ok(ptr) = win.ns_window() else { return };
+    let ns_window = ptr as *mut AnyObject;
+    unsafe {
+        // CanJoinAllSpaces (1<<0) | FullScreenAuxiliary (1<<8) when enabled; default (0) otherwise.
+        let behavior: usize = if enable { (1 << 0) | (1 << 8) } else { 0 };
+        let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+        // NSStatusWindowLevel (25) sits above a fullscreen app's content; normal (0) to restore.
+        let level: isize = if enable { 25 } else { 0 };
+        let _: () = msg_send![ns_window, setLevel: level];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_overlay(_win: &WebviewWindow, _enable: bool) {}
+
+/// Frontend hook (called from enterFloating/exitFloating) to toggle fullscreen overlay.
+#[tauri::command]
+fn set_fullscreen_overlay(window: WebviewWindow, enable: bool) {
+    apply_overlay(&window, enable);
+}
+
 /// Park the companion window top-right, just under the menu bar, near the tray icon.
 /// Horizontally centred on the click point when we have one; clamped to the screen.
 fn position_companion(win: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>) {
@@ -196,6 +226,7 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
     }
     let _ = win.set_always_on_top(true);
     let _ = win.set_visible_on_all_workspaces(true);
+    apply_overlay(&win, true);
     position_companion(&win, anchor);
     let _ = win.show();
     let _ = win.set_focus();
@@ -207,7 +238,11 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![capture_screen, execute_action])
+        .invoke_handler(tauri::generate_handler![
+            capture_screen,
+            execute_action,
+            set_fullscreen_overlay
+        ])
         .setup(|app| {
             // Menu-bar (tray) companion — always reachable, even over fullscreen apps.
             let toggle = MenuItem::with_id(app, "toggle", "Show / Hide Socrates", true, None::<&str>)?;
