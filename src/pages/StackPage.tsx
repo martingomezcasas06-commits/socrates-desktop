@@ -3,6 +3,22 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
 
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const WEB_APP_URL = import.meta.env.VITE_API_URL as string;
+
+/** Open a URL in the system browser. Inside Tauri, a plain target="_blank" does nothing —
+ *  the webview swallows it — so route through the shell plugin instead. */
+async function openExternal(url: string) {
+  if (IS_TAURI) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+      return;
+    } catch { /* fall through to browser */ }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 type Rec = {
   id: string;
   tool_name: string;
@@ -139,14 +155,12 @@ export default function StackPage({
               <span className="tx"><b>Start using them</b>Approved tools show up here with coaching.</span>
             </div>
           </div>
-          <a
+          <button
             className="btn btn-soft btn-block"
-            href="https://socrates.app"
-            target="_blank"
-            rel="noreferrer"
+            onClick={() => openExternal(WEB_APP_URL)}
           >
             <Icon name="open" /> Open the Socrates web app
-          </a>
+          </button>
         </div>
       </div>
     );
@@ -205,14 +219,12 @@ export default function StackPage({
               <div className="tool-use">{rec.use_case}</div>
               <div className="tool-actions">
                 {rec.tool_url ? (
-                  <a
+                  <button
                     className="btn btn-soft btn-sm"
-                    href={rec.tool_url}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={() => openExternal(rec.tool_url!)}
                   >
                     <Icon name="open" /> Open
-                  </a>
+                  </button>
                 ) : (
                   <button className="btn btn-soft btn-sm" disabled>
                     <Icon name="open" /> Open
