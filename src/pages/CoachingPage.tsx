@@ -393,7 +393,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
                 </>
               ) : (
                 <>
-                  <div className="guide-head"><Icon name="target" /><div className="gh-t">Guidance<span className="mono">{tool || "live coaching"}</span></div></div>
+                  <div className="guide-head"><Icon name="target" /><div className="gh-t">Guidance<span className="mono">{tool || "live coaching"}</span></div>
+                    <button className="btn btn-danger btn-sm" style={{ marginLeft: "auto" }} onClick={stopSession}><Icon name="stop" /> End session</button>
+                  </div>
                   <div className="guide-feed" ref={guidanceScrollRef}>
                     {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error}</div>}
                     {summary && (

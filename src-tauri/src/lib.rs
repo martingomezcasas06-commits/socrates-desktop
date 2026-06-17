@@ -170,17 +170,32 @@ fn apply_overlay(win: &WebviewWindow, enable: bool) {
     let Ok(ptr) = win.ns_window() else { return };
     let ns_window = ptr as *mut AnyObject;
     unsafe {
-        // CanJoinAllSpaces (1<<0) | FullScreenAuxiliary (1<<8) when enabled; default (0) otherwise.
-        let behavior: usize = if enable { (1 << 0) | (1 << 8) } else { 0 };
+        // CanJoinAllSpaces (1<<0) | FullScreenAuxiliary (1<<8) | Stationary (1<<4) when enabled.
+        let behavior: usize = if enable { (1 << 0) | (1 << 8) | (1 << 4) } else { 0 };
         let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-        // NSStatusWindowLevel (25) sits above a fullscreen app's content; normal (0) to restore.
-        let level: isize = if enable { 25 } else { 0 };
+        // NSScreenSaverWindowLevel (1000) sits above a fullscreen app's content; normal (0) to restore.
+        let level: isize = if enable { 1000 } else { 0 };
         let _: () = msg_send![ns_window, setLevel: level];
+    }
+}
+
+/// Order the window to the front of the *current* Space without activating the app —
+/// so it appears over a fullscreen app instead of switching away from it.
+#[cfg(target_os = "macos")]
+fn order_front_no_activate(win: &WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    let Ok(ptr) = win.ns_window() else { return };
+    let ns_window = ptr as *mut AnyObject;
+    unsafe {
+        let _: () = msg_send![ns_window, orderFrontRegardless];
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 fn apply_overlay(_win: &WebviewWindow, _enable: bool) {}
+#[cfg(not(target_os = "macos"))]
+fn order_front_no_activate(_win: &WebviewWindow) {}
 
 /// Frontend hook (called from enterFloating/exitFloating) to toggle fullscreen overlay.
 #[tauri::command]
@@ -229,7 +244,9 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
     apply_overlay(&win, true);
     position_companion(&win, anchor);
     let _ = win.show();
-    let _ = win.set_focus();
+    // Bring it into the current (possibly fullscreen) Space WITHOUT activating the app,
+    // which would otherwise bounce us out of the fullscreen app.
+    order_front_no_activate(&win);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
