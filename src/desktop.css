@@ -473,3 +473,26 @@
   .app-body { flex: 1; min-height: 0; display: flex; background: var(--bg); }
   /* login fills the whole window too */
   .app-body.is-login { display: block; }
+
+  /* ════ COMPACT / FLOATING COMPANION MODE ════
+     When the window is shrunk into a floating coaching companion (during a live
+     session it's resized small + always-on-top), collapse to a single column:
+     hide the nav rail and the screen-preview, show just guidance + Q&A. */
+  @media (max-width: 660px) {
+    .rail { display: none; }
+    .coach-sub { padding: 0 14px; }
+    .coach-live { flex-direction: column; }
+    .coach-live .preview-pane { display: none; }
+    .coach-live .guide-pane { width: 100%; border-left: none; flex: 1; }
+    .control-banner { padding: 10px 14px; }
+    .coach-idle { padding: 16px; }
+    .coach-cols { grid-template-columns: 1fr; }
+    .how-row { flex-direction: column; }
+    .start-row { flex-direction: column; align-items: stretch; }
+    .start-row .btn { width: 100%; justify-content: center; }
+    .stack-grid { grid-template-columns: 1fr; padding: 4px 16px 20px; }
+    .chat-aside { display: none; }
+    .head { padding: 16px 16px 12px; }
+    .login { flex-direction: column; }
+    .login-aside { width: 100%; }
+  }

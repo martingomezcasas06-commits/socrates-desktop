@@ -21,6 +21,51 @@ async function getTauriWindow() {
   return getCurrentWindow();
 }
 
+const FLOAT_W = 440, FLOAT_H = 680;
+
+/** Shrink the window into a floating, always-on-top coaching companion parked
+ *  top-right — so it stays visible and reachable while you work in another app. */
+async function enterFloating() {
+  try {
+    const { getCurrentWindow, currentMonitor } = await import("@tauri-apps/api/window");
+    const { LogicalSize, LogicalPosition } = await import("@tauri-apps/api/dpi");
+    const win = getCurrentWindow();
+    await win.setSize(new LogicalSize(FLOAT_W, FLOAT_H));
+    const mon = await currentMonitor();
+    if (mon) {
+      const scale = mon.scaleFactor || 1;
+      const monW = mon.size.width / scale;
+      await win.setPosition(new LogicalPosition(Math.max(12, monW - FLOAT_W - 24), 56));
+    }
+    await win.setAlwaysOnTop(true);
+    await win.show();
+    await win.setFocus();
+  } catch (e) { console.error("enterFloating", e); }
+}
+
+/** Restore the full app window (normal, not on top) when a session ends. */
+async function exitFloating() {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    const win = getCurrentWindow();
+    await win.setAlwaysOnTop(false);
+    await win.setSize(new LogicalSize(980, 700));
+    await win.center();
+  } catch (e) { console.error("exitFloating", e); }
+}
+
+/** Expand the floating companion back to a comfortable size (stays on top during a session). */
+async function expandFloating() {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    const win = getCurrentWindow();
+    await win.setSize(new LogicalSize(980, 700));
+    await win.center();
+  } catch (e) { console.error("expandFloating", e); }
+}
+
 type Mode = "idle" | "advisory" | "autonomous";
 
 type AnalysisResult = { guidance: string; stuck: boolean; offer: string | null };
@@ -123,6 +168,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     setMode("advisory");
     setGuidance("Starting up — I'll have a look at your screen in a moment…");
     setOffer(null); setSummary(null); setAutonomousLog([]);
+    // Become a floating, always-on-top companion so Socrates stays reachable
+    // while you work in the tool you're being coached on.
+    if (IS_TAURI) await enterFloating();
   }
 
   async function stopSession() {
@@ -131,10 +179,8 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
-    if (IS_TAURI) {
-      const win = await getTauriWindow();
-      await win.show(); await win.setAlwaysOnTop(true); await win.setFocus();
-    }
+    // Restore the full app window.
+    if (IS_TAURI) await exitFloating();
     setMode("idle"); setOffer(null); setSummary(null); setGuidance("");
   }
 
@@ -157,10 +203,8 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       await win.setAlwaysOnTop(false); await win.hide();
     }
     await runAutonomousLoop();
-    if (IS_TAURI) {
-      const win = await getTauriWindow();
-      await win.show(); await win.setAlwaysOnTop(true); await win.setFocus();
-    }
+    // Back to the floating advisory companion.
+    if (IS_TAURI) await enterFloating();
   }
 
   async function runAutonomousLoop() {
@@ -227,8 +271,14 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     if (el) el.scrollTop = el.scrollHeight;
   }, [qa, guidance]);
 
-  function popOut() {
-    const w = window.open(window.location.href, "socrates-companion", "width=340,height=560,resizable=yes,scrollbars=no");
+  const [expanded, setExpanded] = useState(false);
+  async function toggleSize() {
+    if (IS_TAURI) {
+      if (expanded) { await enterFloating(); setExpanded(false); }
+      else { await expandFloating(); setExpanded(true); }
+      return;
+    }
+    const w = window.open(window.location.href, "socrates-companion", "width=440,height=680,resizable=yes,scrollbars=no");
     if (w) w.focus();
   }
 
@@ -254,7 +304,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       <div className="coach-sub">
         <button className={`coach-tab${tab === "coaching" ? " active" : ""}`} onClick={() => setTab("coaching")}><Icon name="coach" /> Coaching</button>
         <button className={`coach-tab${tab === "chat" ? " active" : ""}`} onClick={() => setTab("chat")}><Icon name="chat" /> Chat</button>
-        <button className="tb-btn" style={{ marginLeft: "auto", marginRight: 0 }} onClick={popOut} title="Pop out into a floating companion"><Icon name="pop" /></button>
+        <button className="tb-btn" style={{ marginLeft: "auto", marginRight: 0 }} onClick={toggleSize} title={expanded ? "Shrink to floating companion" : "Expand"}><Icon name="pop" /></button>
       </div>
 
       {tab === "chat" ? (
