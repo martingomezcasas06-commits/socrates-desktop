@@ -380,9 +380,9 @@
   .cursor-ghost { position: absolute; width: 18px; height: 18px; pointer-events: none; transition: all .8s cubic-bezier(.3,.6,.2,1); z-index: 3; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
 
   .guide-pane { width: 312px; flex-shrink: 0; border-left: 1px solid var(--rule); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
-  .guide-head { padding: 15px 16px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 9px; }
+  .guide-head { padding: 15px 16px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
   .guide-head .gh-t { font-size: 13.5px; font-weight: 600; } .guide-head .gh-t .mono { color: var(--ink-faint); display: block; margin-top: 1px; }
-  .guide-feed { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .guide-feed { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
   .guide-step { display: flex; gap: 11px; }
   .guide-step .gs-n { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
   .guide-step.done .gs-n { background: var(--green-soft); color: var(--green); }
@@ -391,7 +391,7 @@
   .guide-step .gs-tx { font-size: 13px; line-height: 1.5; padding-top: 1px; }
   .guide-step.todo .gs-tx { color: var(--ink-faint); }
   .guide-step.active .gs-tx { color: var(--ink); } .guide-step.active .gs-tx b { color: var(--accent-2); }
-  .guide-qa { border-top: 1px solid var(--rule); padding: 13px 16px; }
+  .guide-qa { border-top: 1px solid var(--rule); padding: 13px 16px; flex-shrink: 0; }
   .guide-qa .qa-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 9px; }
   .qa-input { display: flex; align-items: center; gap: 8px; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 8px 10px; background: var(--surface-2); }
   .qa-input input { flex: 1; background: transparent; border: none; color: var(--ink); font-family: inherit; font-size: 12.5px; }
