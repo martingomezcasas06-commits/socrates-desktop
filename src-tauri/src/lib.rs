@@ -11,6 +11,12 @@ use enigo::{
     Enigo, Key, Keyboard, Mouse, Settings,
 };
 use std::io::Cursor;
+use tauri::{
+    image::Image,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
+};
 use xcap::Monitor;
 
 /// Longest screenshot side sent to the vision model (shared by capture + coord scaling).
@@ -152,6 +158,49 @@ fn execute_action(
     }
 }
 
+/// Park the companion window top-right, just under the menu bar, near the tray icon.
+/// Horizontally centred on the click point when we have one; clamped to the screen.
+fn position_companion(win: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>) {
+    if let Ok(Some(monitor)) = win.current_monitor() {
+        let msize: &PhysicalSize<u32> = monitor.size();
+        let mpos: &PhysicalPosition<i32> = monitor.position();
+        let scale = monitor.scale_factor();
+        let wsize = win.outer_size().unwrap_or(PhysicalSize {
+            width: (440.0 * scale) as u32,
+            height: (680.0 * scale) as u32,
+        });
+        let margin = (12.0 * scale) as i32;
+        let menubar = (30.0 * scale) as i32;
+        let max_x = mpos.x + msize.width as i32 - wsize.width as i32 - margin;
+        let min_x = mpos.x + margin;
+        let mut x = match anchor {
+            Some(p) => p.x as i32 - wsize.width as i32 / 2,
+            None => max_x,
+        };
+        x = x.clamp(min_x, max_x.max(min_x));
+        let y = mpos.y + menubar;
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    }
+}
+
+/// Show / hide the Socrates companion from the menu-bar icon. When shown it floats
+/// above everything (incl. fullscreen apps) so it can coach without being buried.
+fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let up = win.is_visible().unwrap_or(false) && win.is_focused().unwrap_or(false);
+    if up {
+        let _ = win.hide();
+        return;
+    }
+    let _ = win.set_always_on_top(true);
+    let _ = win.set_visible_on_all_workspaces(true);
+    position_companion(&win, anchor);
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -159,6 +208,38 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![capture_screen, execute_action])
+        .setup(|app| {
+            // Menu-bar (tray) companion — always reachable, even over fullscreen apps.
+            let toggle = MenuItem::with_id(app, "toggle", "Show / Hide Socrates", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Socrates", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&toggle, &quit])?;
+            let icon = Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?;
+
+            TrayIconBuilder::with_id("socrates-tray")
+                .icon(icon)
+                .icon_as_template(true)
+                .tooltip("Socrates — click to open your coach")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "toggle" => toggle_companion(app, None),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        position,
+                        ..
+                    } = event
+                    {
+                        toggle_companion(tray.app_handle(), Some(position));
+                    }
+                })
+                .build(app)?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Socrates");
 }

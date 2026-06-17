@@ -38,6 +38,8 @@ async function enterFloating() {
       await win.setPosition(new LogicalPosition(Math.max(12, monW - FLOAT_W - 24), 56));
     }
     await win.setAlwaysOnTop(true);
+    // Float above other apps' fullscreen Spaces too, so coaching is never buried.
+    try { await win.setVisibleOnAllWorkspaces(true); } catch { /* older build */ }
     await win.show();
     await win.setFocus();
   } catch (e) { console.error("enterFloating", e); }
@@ -50,6 +52,7 @@ async function exitFloating() {
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     const win = getCurrentWindow();
     await win.setAlwaysOnTop(false);
+    try { await win.setVisibleOnAllWorkspaces(false); } catch { /* older build */ }
     await win.setSize(new LogicalSize(980, 700));
     await win.center();
   } catch (e) { console.error("exitFloating", e); }
