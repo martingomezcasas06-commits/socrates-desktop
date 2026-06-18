@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="256" height="256" role="img" aria-label="Socrates">
+  <ellipse cx="32" cy="32" rx="27" ry="9.2" fill="none" stroke="#8FD4E8" stroke-width="3.4" stroke-linecap="round" transform="rotate(-25 32 32)" opacity="0.92"></ellipse>
+  <circle cx="32" cy="33" r="13.5" fill="#15637F"></circle>
+  <clipPath id="socFront"><rect x="-12" y="34" width="88" height="48"></rect></clipPath>
+  <g clip-path="url(#socFront)">
+    <ellipse cx="32" cy="32" rx="27" ry="9.2" fill="none" stroke="#8FD4E8" stroke-width="3.4" stroke-linecap="round" transform="rotate(-25 32 32)"></ellipse>
+  </g>
+</svg>

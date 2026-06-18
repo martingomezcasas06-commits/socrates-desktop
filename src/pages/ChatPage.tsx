@@ -20,7 +20,7 @@ const RECENT_TOPICS = [
 ];
 
 const TOOL_GRADIENTS = [
-  ["#6366f1", "#8b5cf6"],
+  ["#2E89AE", "#8b5cf6"],
   ["#10b981", "#059669"],
   ["#f59e0b", "#ef4444"],
   ["#3b82f6", "#06b6d4"],
