@@ -222,7 +222,14 @@ fn overlay_panel(app: &AppHandle, enable: bool) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn overlay_panel(_app: &AppHandle, _enable: bool) {}
+fn overlay_panel(app: &AppHandle, enable: bool) {
+    // Windows/Linux have no macOS-style fullscreen Spaces, so a plain always-on-top window
+    // already floats over borderless-fullscreen apps (browsers, web tools). Set it directly.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_always_on_top(enable);
+        let _ = win.set_visible_on_all_workspaces(enable);
+    }
+}
 
 /// Frontend hook (called from enterFloating/exitFloating) to toggle the fullscreen overlay.
 #[tauri::command]
