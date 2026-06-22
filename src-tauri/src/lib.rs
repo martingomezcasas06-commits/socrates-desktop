@@ -212,12 +212,22 @@ fn overlay_panel(app: &AppHandle, enable: bool) {
         );
         panel.set_floating_panel(true);
         panel.set_hides_on_deactivate(false);
+        // Shrink to the compact companion. The panel's own setContentSize is reliable
+        // (JS setSize can be ignored once the window is an NSPanel), then park it top-right.
+        panel.set_content_size(440.0, 680.0);
+        if let Some(win) = app.get_webview_window("main") {
+            position_companion(&win, None);
+        }
         panel.show(); // order_front_regardless — appears without activating the app
     } else {
         panel.set_style_mask(1 | 2 | 4 | 8); // normal window chrome
         panel.set_level(0);
         panel.set_collection_behaviour(CB::empty());
         panel.set_floating_panel(false);
+        panel.set_content_size(980.0, 700.0);
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.center();
+        }
     }
 }
 
