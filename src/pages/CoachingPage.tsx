@@ -69,14 +69,23 @@ async function expandFloating() {
 
 type Mode = "idle" | "advisory" | "autonomous";
 
-type AnalysisResult = { guidance: string; stuck: boolean; offer: string | null };
+type AnalysisResult = { guidance: string; tryThis?: string | null; stuck: boolean; offer: string | null; level?: string; sessionCount?: number };
 type AutonomousResult = {
   action: string; x: number | null; y: number | null; value: string;
   scroll_direction: string; action_taken: string; task_complete: boolean; summary: string | null;
 };
 
 const API_URL  = import.meta.env.VITE_API_URL as string;
-const INTERVAL = 5000;
+// Teaching cadence: a learner needs time to read a step and act on it before the
+// tutor advances. A fast tick makes the guidance churn and feel reactive.
+const INTERVAL = 9000;
+
+// Phase shown in the session header — reinforces the "leveling up" feel.
+const LEVEL_LABEL: Record<string, string> = {
+  new: "Getting oriented",
+  learning: "Core skills",
+  confident: "Pro features",
+};
 
 const HOW = [
   { n: 1, t: "You start a session", d: "Pick a tool. Socrates begins watching your screen — privately." },
@@ -88,7 +97,15 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   const [tool, setTool] = useState(initialTool || "");
   const [mode, setMode] = useState<Mode>("idle");
   const [guidance, setGuidance] = useState("");
+  const [tryThis, setTryThis] = useState<string | null>(null);
   const [offer, setOffer] = useState<string | null>(null);
+  // The lesson so far — recent guidance steps, sent back each tick so the tutor
+  // advances instead of repeating itself.
+  const taughtRef = useRef<string[]>([]);
+  // First tick of a session is phase:"start" (bumps the saved session count).
+  const startPhaseRef = useRef(false);
+  // Where the learner is for this tool: new (tour) → learning (core) → confident (pro).
+  const [level, setLevel] = useState<string | null>(null);
   const [autonomousLog, setAutonomousLog] = useState<string[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -96,7 +113,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   const autonomousRef = useRef(false);
   const analyzingRef = useRef(false);
 
-  const [qa, setQa] = useState<{ q: string; a: string | null }[]>([]);
+  const [qa, setQa] = useState<{ q: string; a: string | null; tryThis?: string | null }[]>([]);
   const [askInput, setAskInput] = useState("");
   const [asking, setAsking] = useState(false);
   const guidanceScrollRef = useRef<HTMLDivElement>(null);
@@ -132,14 +149,22 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       }
       setError("");
       setGuidance((g) => g || "Looking at your screen…");
+      const phase = startPhaseRef.current ? "start" : "tick";
       const res = await fetch(`${API_URL}/api/coaching/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ screenshot, tool }),
+        body: JSON.stringify({ screenshot, tool, taught: taughtRef.current.slice(-4), phase }),
       });
       if (!res.ok) { setError(`Socrates couldn't analyze the screen (HTTP ${res.status}).`); return; }
       const data: AnalysisResult = await res.json();
+      startPhaseRef.current = false; // the session has been counted
       setGuidance(data.guidance);
+      setTryThis(data.tryThis ?? null);
+      if (data.level) setLevel(data.level);
+      // Record the step (skip near-duplicate ticks where the tutor is holding).
+      if (data.guidance && taughtRef.current[taughtRef.current.length - 1] !== data.guidance) {
+        taughtRef.current = [...taughtRef.current, data.guidance].slice(-8);
+      }
       if (data.stuck && data.offer) setOffer(data.offer);
     } catch (e) {
       setError(`Connection problem: ${e instanceof Error ? e.message : String(e)}`);
@@ -179,7 +204,8 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       }
     }
     setMode("advisory");
-    setGuidance("Starting up — I'll have a look at your screen in a moment…");
+    setGuidance(`Great — let's learn ${tool} together. Open it up and I'll give you a quick tour of what everything is, then we'll try it.`);
+    setTryThis(null); taughtRef.current = []; startPhaseRef.current = true; setLevel(null);
     setOffer(null); setSummary(null); setAutonomousLog([]);
     // Become a floating, always-on-top companion so Socrates stays reachable
     // while you work in the tool you're being coached on.
@@ -194,7 +220,8 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     if (videoRef.current) videoRef.current.srcObject = null;
     // Restore the full app window.
     if (IS_TAURI) await exitFloating();
-    setMode("idle"); setOffer(null); setSummary(null); setGuidance("");
+    taughtRef.current = []; startPhaseRef.current = false;
+    setMode("idle"); setOffer(null); setSummary(null); setGuidance(""); setTryThis(null); setLevel(null);
   }
 
   useEffect(() => {
@@ -272,7 +299,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
         body: JSON.stringify({ screenshot, tool, question: q, history: qa.filter((t): t is { q: string; a: string } => t.a !== null).slice(-6) }),
       });
       const data: AnalysisResult = await res.json();
-      setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: data.guidance } : item)));
+      setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: data.guidance, tryThis: data.tryThis ?? null } : item)));
     } catch {
       setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: "Sorry — couldn't reach Socrates. Try again." } : item)));
     }
@@ -406,8 +433,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
                 </>
               ) : (
                 <>
-                  <div className="guide-head"><Icon name="target" /><div className="gh-t">Guidance<span className="mono">{tool || "live coaching"}</span></div>
-                    <button className="btn btn-danger btn-sm" style={{ marginLeft: "auto" }} onClick={stopSession}><Icon name="stop" /> End session</button>
+                  <div className="guide-head"><Icon name="target" /><div className="gh-t" style={{ flex: 1, minWidth: 0 }}>Guidance<span className="mono">{tool || "live coaching"}</span></div>
+                    {level && LEVEL_LABEL[level] && <span className={`lvl-badge ${level}`}>{LEVEL_LABEL[level]}</span>}
+                    <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> End session</button>
                   </div>
                   <div className="guide-feed" ref={guidanceScrollRef}
                     onScroll={(e) => {
@@ -422,12 +450,14 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
                       </div>
                     )}
                     <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink)" }}>{guidance || "Analysing your screen…"}</p>
+                    {tryThis && <TryThisBox text={tryThis} />}
                     {qa.map((item, i) => (
                       <div key={i} style={{ marginTop: 4 }}>
                         <div style={{ fontSize: 12.5, color: "var(--accent-2)", background: "var(--accent-soft)", borderRadius: "10px 10px 2px 10px", padding: "7px 11px", marginLeft: "auto", width: "fit-content", maxWidth: "90%", lineHeight: 1.45 }}>{item.q}</div>
                         <div style={{ fontSize: 13, color: "var(--ink-dim)", lineHeight: 1.6, marginTop: 6 }}>
                           {item.a ?? <span style={{ opacity: 0.6, fontStyle: "italic" }}>looking at your screen…</span>}
                         </div>
+                        {item.tryThis && <TryThisBox text={item.tryThis} />}
                       </div>
                     ))}
                     {offer && (
@@ -448,6 +478,30 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** A copy-paste-ready example the tutor wants the learner to type into the tool.
+ *  This is the thing a true beginner needs most — they never face a blank box. */
+function TryThisBox({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch { /* clipboard blocked — the text is still visible to retype */ }
+  }
+  return (
+    <div className="try-box">
+      <div className="try-head">
+        <span className="try-label"><Icon name="sparkle" /> Try typing this</span>
+        <button className="try-copy" onClick={copy}>
+          <Icon name={copied ? "check" : "copy"} /> {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <div className="try-text">{text}</div>
     </div>
   );
 }
