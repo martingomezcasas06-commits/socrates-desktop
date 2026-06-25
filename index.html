@@ -11,6 +11,23 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Never fail to a black void. If the app bundle throws while loading (e.g. a
+         misconfigured build with missing env vars — which crashes at module-eval
+         time, before React mounts), show a readable message instead of the bare
+         body background, so the window isn't just "dead" with no clue why. -->
+    <script>
+      window.addEventListener("error", function (e) {
+        var root = document.getElementById("root");
+        if (!root || root.childElementCount > 0) return; // app mounted fine — ignore
+        root.innerHTML =
+          '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:32px;text-align:center;font-family:system-ui,sans-serif;color:#F2EBDD;background:#05070C">' +
+          '<div style="font-size:18px;font-weight:600">Socrates couldn\'t start</div>' +
+          '<div style="font-size:13px;opacity:.7;max-width:420px">Something went wrong while loading. Please reinstall the latest version, or send support the detail below.</div>' +
+          '<pre style="font-size:11px;opacity:.5;max-width:480px;white-space:pre-wrap;word-break:break-word">' +
+          String((e && e.message) || e) +
+          "</pre></div>";
+      });
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
