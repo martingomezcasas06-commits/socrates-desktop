@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
+import ToolLogo from "../components/ToolLogo";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -184,14 +185,13 @@ export default function ChatPage({ session }: { session: Session }) {
             <h4>Your tools</h4>
             {(tools.length ? tools : ["ChatGPT", "Claude", "Perplexity", "Notion AI"]).map((t, i) => (
               <div className="aside-tool" key={t + i}>
-                <div
+                <ToolLogo
+                  name={t}
                   className="lg"
-                  style={{
+                  fallbackStyle={{
                     background: `linear-gradient(135deg, ${TOOL_GRADIENTS[i % TOOL_GRADIENTS.length][0]}, ${TOOL_GRADIENTS[i % TOOL_GRADIENTS.length][1]})`,
                   }}
-                >
-                  {t.slice(0, 1)}
-                </div>
+                />
                 <span className="nm">{t}</span>
               </div>
             ))}

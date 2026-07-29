@@ -197,7 +197,7 @@ fn execute_action(
 /// The window is converted to a non-activating NSPanel (see `to_panel` in setup); here we set
 /// the level, collection behaviour and style mask so it appears in place without stealing focus.
 #[cfg(target_os = "macos")]
-fn overlay_panel(app: &AppHandle, enable: bool) {
+fn overlay_panel(app: &AppHandle, enable: bool, width: Option<f64>, height: Option<f64>) {
     use tauri_nspanel::cocoa::appkit::NSWindowCollectionBehavior as CB;
     use tauri_nspanel::ManagerExt;
     let Ok(panel) = app.get_webview_panel("main") else { return };
@@ -212,9 +212,9 @@ fn overlay_panel(app: &AppHandle, enable: bool) {
         );
         panel.set_floating_panel(true);
         panel.set_hides_on_deactivate(false);
-        // Shrink to the compact companion. The panel's own setContentSize is reliable
-        // (JS setSize can be ignored once the window is an NSPanel), then park it top-right.
-        panel.set_content_size(440.0, 680.0);
+        // Size the panel directly — JS setSize is ignored once the window is an NSPanel.
+        // Caller-supplied size (e.g. the tiny voice orb) or the default text companion.
+        panel.set_content_size(width.unwrap_or(440.0), height.unwrap_or(680.0));
         if let Some(win) = app.get_webview_window("main") {
             position_companion(&win, None);
         }
@@ -232,7 +232,7 @@ fn overlay_panel(app: &AppHandle, enable: bool) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn overlay_panel(app: &AppHandle, enable: bool) {
+fn overlay_panel(app: &AppHandle, enable: bool, _width: Option<f64>, _height: Option<f64>) {
     // Windows/Linux have no macOS-style fullscreen Spaces, so a plain always-on-top window
     // already floats over borderless-fullscreen apps (browsers, web tools). Set it directly.
     if let Some(win) = app.get_webview_window("main") {
@@ -241,10 +241,11 @@ fn overlay_panel(app: &AppHandle, enable: bool) {
     }
 }
 
-/// Frontend hook (called from enterFloating/exitFloating) to toggle the fullscreen overlay.
+/// Frontend hook (enterFloating/exitFloating, voice orb) to toggle the overlay.
+/// Optional width/height set the floating size (the voice orb is much smaller).
 #[tauri::command]
-fn set_fullscreen_overlay(app: AppHandle, enable: bool) {
-    overlay_panel(&app, enable);
+fn set_fullscreen_overlay(app: AppHandle, enable: bool, width: Option<f64>, height: Option<f64>) {
+    overlay_panel(&app, enable, width, height);
 }
 
 /// Park the companion window top-right, just under the menu bar, near the tray icon.
@@ -294,7 +295,26 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
     // Show as a compact floating companion, top-right, over everything (incl. fullscreen).
     let _ = win.set_size(LogicalSize::new(440.0, 680.0));
     position_companion(&win, anchor);
-    overlay_panel(app, true);
+    overlay_panel(app, true, None, None);
+}
+
+/// Bring the full app window back to the front — used when the dock icon is clicked
+/// (Reopen) or after the window was hidden. Drops any leftover coaching-overlay
+/// level/style so it behaves like an ordinary window again, then shows + focuses it.
+fn show_main(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("main") else { return };
+    overlay_panel(app, false, None, None); // restore normal chrome/level + 980x700
+    let _ = win.set_size(LogicalSize::new(980.0, 700.0));
+    let _ = win.center();
+    let _ = win.show();
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+        if let Ok(panel) = app.get_webview_panel("main") {
+            panel.show(); // order_front_regardless — actually raise the panel
+        }
+    }
+    let _ = win.set_focus();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -316,6 +336,25 @@ pub fn run() {
             screen_recording_allowed,
             request_screen_recording
         ])
+        .on_window_event(|window, event| {
+            // Red close button: don't DESTROY the window (that left the app running
+            // but inaccessible — you had to force-quit). Hide it instead; the dock
+            // icon or the menu-bar icon brings it back. Quit via ⌘Q or the tray.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let app = window.app_handle();
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri_nspanel::ManagerExt;
+                    if let Ok(panel) = app.get_webview_panel("main") {
+                        panel.order_out(None);
+                        return;
+                    }
+                }
+                let _ = window.hide();
+                let _ = app;
+            }
+        })
         .setup(|app| {
             // Convert the main window into a non-activating NSPanel so it can overlay other
             // apps' fullscreen Spaces during coaching. By default it behaves like a normal
@@ -366,6 +405,15 @@ pub fn run() {
                 .build(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Socrates");
+        .build(tauri::generate_context!())
+        .expect("error while running Socrates")
+        .run(|app_handle, event| {
+            // macOS fires Reopen when you click the dock icon (or relaunch) while the
+            // app is already running. Bring the window back instead of doing nothing.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                show_main(app_handle);
+            }
+            let _ = (app_handle, &event);
+        });
 }

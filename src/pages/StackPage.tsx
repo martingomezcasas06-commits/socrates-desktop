@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
+import ToolLogo from "../components/ToolLogo";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const WEB_APP_URL = import.meta.env.VITE_API_URL as string;
@@ -204,12 +205,11 @@ export default function StackPage({
           {visible.map((rec) => (
             <div key={rec.id} className="tool-card">
               <div className="tool-top">
-                <div
+                <ToolLogo
+                  name={rec.tool_name}
                   className="tool-logo"
-                  style={{ background: toolGradient(rec.tool_name) }}
-                >
-                  {rec.tool_name.slice(0, 1).toUpperCase()}
-                </div>
+                  fallbackStyle={{ background: toolGradient(rec.tool_name) }}
+                />
                 <div className="tt">
                   <div className="nm">{rec.tool_name}</div>
                   <div className="ct">{rec.tool_category}</div>

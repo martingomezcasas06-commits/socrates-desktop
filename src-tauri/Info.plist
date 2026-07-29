@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Required so macOS lets the app use the microphone for hands-free voice coaching.
+       Without this key, accessing the mic crashes the app. Non-sandboxed app, so no
+       audio-input entitlement is needed — the usage string + TCC prompt is enough. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Socrates listens during a voice coaching call so you can talk to it out loud instead of typing.</string>
+</dict>
+</plist>

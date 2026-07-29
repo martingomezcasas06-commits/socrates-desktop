@@ -9,6 +9,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
+import VoiceSession from "../components/VoiceSession";
+import RealtimeVoiceSession from "../components/RealtimeVoiceSession";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -122,6 +124,14 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   const streamRef = useRef<MediaStream | null>(null);
 
   const [tab, setTab] = useState<"coaching" | "chat">("coaching");
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceFallback, setVoiceFallback] = useState(false);
+
+  function startVoice() {
+    if (!tool.trim()) { setError("Please enter the tool name first."); return; }
+    setError("");
+    setVoiceActive(true);
+  }
 
   // ── Screen capture ──
   async function captureScreen(): Promise<string> {
@@ -339,6 +349,21 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     </div>
   );
 
+  // Hands-free voice call takes over the whole window (shrunk to a tiny orb).
+  // GPT-realtime (speech-to-speech, sub-second) first; classic pipeline as fallback.
+  if (voiceActive) {
+    return voiceFallback ? (
+      <VoiceSession session={session} tool={tool} onEnd={() => setVoiceActive(false)} />
+    ) : (
+      <RealtimeVoiceSession
+        session={session}
+        tool={tool}
+        onEnd={() => setVoiceActive(false)}
+        onFallback={() => setVoiceFallback(true)}
+      />
+    );
+  }
+
   return (
     <div className="coach">
       {/* hidden capture elements (browser mode) */}
@@ -358,13 +383,14 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
         /* ── IDLE ── */
         <div className="coach-idle anim">
           <div className="start-panel">
-            <h2>Start a <span className="ital">live coaching</span> session</h2>
-            <p>Tell me which tool you want help with. I&apos;ll watch your screen and guide you step by step — and if you get stuck, I&apos;ll offer to take over.</p>
+            <h2>Start a <span className="ital">voice call</span> with Socrates</h2>
+            <p>Tell me which tool you want to learn. I&apos;ll hop on a quick call, watch your screen, and walk you through it out loud — just talk to me, no reading.</p>
             <div className="start-row">
               <input className="field" value={tool} onChange={(e) => setTool(e.target.value)} placeholder="Which tool? (e.g. Claude, ChatGPT, Notion)"
-                onKeyDown={(e) => { if (e.key === "Enter") startAdvisory(); }} />
-              <button className="btn btn-primary btn-lg" onClick={startAdvisory}><Icon name="play" /> Start session</button>
+                onKeyDown={(e) => { if (e.key === "Enter") startVoice(); }} />
+              <button className="btn btn-primary btn-lg" onClick={startVoice}><Icon name="coach" /> Start voice call</button>
             </div>
+            <button className="link-quiet" onClick={startAdvisory}>Prefer text? Guide me by text instead →</button>
           </div>
           {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 12 }}>{error}</div>}
           <div className="panel" style={{ marginTop: 16 }}>
