@@ -9,8 +9,8 @@
  * call opens, one the instant you start speaking (so he sees what you see
  * when he answers), and a periodic refresh while idle.
  *
- * Captions: the model streams its own transcript as it speaks — each chunk
- * becomes sliding karaoke words in the orb, genuinely synced to the voice.
+ * Captions: the model streams its own transcript as it speaks; the orb shows it
+ * as scrolling subtitles that follow the newest line.
  *
  * If the realtime session can't be established, onFallback() lets the caller
  * drop back to the classic pipeline (VoiceSession).
@@ -53,8 +53,7 @@ export default function RealtimeVoiceSession({
   onFallback: () => void;
 }) {
   const [status, setStatus] = useState<Status>("connecting");
-  const [words, setWords] = useState<string[]>([]); // live caption words (karaoke)
-  const [turnId, setTurnId] = useState(0);
+  const [caption, setCaption] = useState("");        // live caption text, streamed
   const [youSaid, setYouSaid] = useState("");
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");
@@ -70,6 +69,7 @@ export default function RealtimeVoiceSession({
   const micRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const planetRef = useRef<HTMLDivElement | null>(null);   // orb element — amplitude is written here
+  const capRef = useRef<HTMLDivElement | null>(null);      // caption viewport, kept scrolled to the newest line
   const vizCtxRef = useRef<AudioContext | null>(null);
   const vizRafRef = useRef<number | null>(null);
   const latestShotRef = useRef<string>("");
@@ -215,14 +215,15 @@ export default function RealtimeVoiceSession({
             case "response.created":
               setStatusBoth("thinking");
               assistantTextRef.current = "";
-              setWords([]);
-              setTurnId((n) => n + 1);
+              setCaption("");
               break;
+            // Both event names appear depending on output modality — accept either.
+            case "response.output_text.delta":
             case "response.output_audio_transcript.delta":
               if (ev.delta) {
                 setStatusBoth("speaking");
                 assistantTextRef.current += ev.delta;
-                setWords(assistantTextRef.current.trim().split(/\s+/));
+                setCaption(assistantTextRef.current);
               }
               break;
             case "response.output_audio_transcript.done":
@@ -335,6 +336,12 @@ export default function RealtimeVoiceSession({
     if (expanded && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
   }, [transcript, expanded, status]);
 
+  // Follow the newest caption line as it streams in.
+  useEffect(() => {
+    const el = capRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [caption]);
+
   async function end() {
     aliveRef.current = false;
     if (shotTimerRef.current) clearInterval(shotTimerRef.current);
@@ -387,13 +394,12 @@ export default function RealtimeVoiceSession({
       <div className="vo-top">{statusHead}</div>
       {error ? (
         <div className="vo-cap"><p className="vo-cap-line vo-cap-err">{error}</p></div>
-      ) : words.length > 0 ? (
-        <div className="vo-cap" aria-live="polite">
-          <p className="vo-cap-line">
-            {words.map((w, i) => (
-              <span key={`${turnId}:${i}`} className="vo-word">{w}</span>
-            ))}
-          </p>
+      ) : caption ? (
+        // Captions scroll like real subtitles: text stays put, the view follows the
+        // newest line, and the top edge fades out. No per-word animation — with a
+        // streaming transcript that only made the layout jitter.
+        <div className="vo-cap" aria-live="polite" ref={capRef}>
+          <p className="vo-cap-line">{caption}</p>
         </div>
       ) : (
         <div className="vo-cap vo-cap-soft">
