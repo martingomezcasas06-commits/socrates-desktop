@@ -126,6 +126,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   const [tab, setTab] = useState<"coaching" | "chat">("coaching");
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceFallback, setVoiceFallback] = useState(false);
+  // Why realtime bailed, so the "classic" badge can say what actually broke
+  // instead of just that something did.
+  const [voiceFallbackReason, setVoiceFallbackReason] = useState("");
 
   function startVoice() {
     if (!tool.trim()) { setError("Please enter the tool name first."); return; }
@@ -353,13 +356,18 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   // GPT-realtime (speech-to-speech, sub-second) first; classic pipeline as fallback.
   if (voiceActive) {
     return voiceFallback ? (
-      <VoiceSession session={session} tool={tool} onEnd={() => setVoiceActive(false)} />
+      <VoiceSession
+        session={session}
+        tool={tool}
+        onEnd={() => setVoiceActive(false)}
+        fallbackReason={voiceFallbackReason}
+      />
     ) : (
       <RealtimeVoiceSession
         session={session}
         tool={tool}
         onEnd={() => setVoiceActive(false)}
-        onFallback={() => setVoiceFallback(true)}
+        onFallback={(reason) => { setVoiceFallbackReason(reason); setVoiceFallback(true); }}
       />
     );
   }

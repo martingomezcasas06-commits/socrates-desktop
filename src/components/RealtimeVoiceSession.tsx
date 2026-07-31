@@ -51,7 +51,7 @@ export default function RealtimeVoiceSession({
   session: Session;
   tool: string;
   onEnd: () => void;
-  onFallback: () => void;
+  onFallback: (reason: string) => void;
 }) {
   const [status, setStatus] = useState<Status>("connecting");
   const [caption, setCaption] = useState("");        // live caption text, streamed
@@ -147,7 +147,7 @@ export default function RealtimeVoiceSession({
         if (data.level) setLevel(data.level);
       } catch (e) {
         vlog('REALTIME: mint FAILED → falling back to classic. ' + String(e));
-        if (!cancelled) onFallback();
+        if (!cancelled) onFallback('key: ' + String(e));
         return;
       }
 
@@ -346,7 +346,7 @@ export default function RealtimeVoiceSession({
         setStatusBoth("listening");
       } catch (e) {
         vlog('REALTIME: webrtc setup FAILED → falling back to classic. ' + String(e));
-        if (!cancelled) onFallback();
+        if (!cancelled) onFallback('connect: ' + String(e));
         return;
       }
 

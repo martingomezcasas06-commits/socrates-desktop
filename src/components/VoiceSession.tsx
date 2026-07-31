@@ -89,7 +89,17 @@ const STATUS_LABEL: Record<Status, string> = {
   thinking: "Thinking…",
 };
 
-export default function VoiceSession({ session, tool, onEnd }: { session: Session; tool: string; onEnd: () => void }) {
+export default function VoiceSession({
+  session,
+  tool,
+  onEnd,
+  fallbackReason = "",
+}: {
+  session: Session;
+  tool: string;
+  onEnd: () => void;
+  fallbackReason?: string;
+}) {
   const [status, setStatus] = useState<Status>("connecting");
   const [caption, setCaption] = useState("");      // last thing Socrates said
   const [reveal, setReveal] = useState(0);          // # of caption words shown (live, synced to speech)
@@ -328,7 +338,7 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
   // ── Lifecycle ──
   useEffect(() => {
     aliveRef.current = true;
-    vlog('CLASSIC: mounting (engine=old pipeline — realtime was unavailable)');
+    vlog('CLASSIC: mounting (engine=old pipeline — realtime was unavailable) reason=' + (fallbackReason || 'unknown'));
     let cancelled = false;
     (async () => {
       await floatWindow(ORB_W, ORB_H);
@@ -440,7 +450,16 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
         {level && <span className="vo-lvl">{level === "new" ? "intro" : level === "learning" ? "core" : "pro"}</span>}
         {/* This engine only runs when the realtime call couldn't connect. Say so —
             a silent downgrade made a broken call look like a broken product. */}
-        <span className="vo-lvl vo-lvl-warn" title="Realtime voice unavailable — using the classic engine">classic</span>
+        <span
+          className="vo-lvl vo-lvl-warn"
+          title={
+            fallbackReason
+              ? `Realtime voice unavailable — using the classic engine.\n${fallbackReason}`
+              : "Realtime voice unavailable — using the classic engine"
+          }
+        >
+          classic
+        </span>
       </span>
       <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
         <Icon name={muted ? "eye" : "coach"} />
