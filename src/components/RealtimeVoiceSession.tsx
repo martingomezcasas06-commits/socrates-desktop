@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
 import PlanetOrb from "./PlanetOrb";
+import { vlog } from "../lib/vlog";
 import { floatWindow, restoreWindow, captureScreen, ORB_W, ORB_H, EXP_W, EXP_H } from "./VoiceSession";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -126,6 +127,7 @@ export default function RealtimeVoiceSession({
     let cancelled = false;
 
     (async () => {
+      vlog('REALTIME: mounting (engine=realtime)');
       await floatWindow(ORB_W, ORB_H);
 
       // 1. Ephemeral key from our server (bumps session count, builds tutor instructions)
@@ -137,11 +139,12 @@ export default function RealtimeVoiceSession({
           body: JSON.stringify({ tool }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { client_secret: string; level?: string };
+        const data = (await res.json()) as { client_secret: string; level?: string; model?: string };
         secret = data.client_secret;
+        vlog('REALTIME: mint ok, model=' + data.model);
         if (data.level) setLevel(data.level);
       } catch (e) {
-        console.error("realtime-session mint failed, falling back", e);
+        vlog('REALTIME: mint FAILED → falling back to classic. ' + String(e));
         if (!cancelled) onFallback();
         return;
       }
@@ -196,6 +199,7 @@ export default function RealtimeVoiceSession({
 
         dc.onopen = () => {
           if (!aliveRef.current) return;
+          vlog('REALTIME: data channel OPEN — realtime engine is live');
           // Semantic turn detection (model decides when you're done talking — this is
           // what killed our hand-tuned VAD) + user speech transcription for the chat view.
           send({
@@ -258,6 +262,7 @@ export default function RealtimeVoiceSession({
               break;
             case "response.done": {
               const text = assistantTextRef.current.trim();
+              vlog('REALTIME: reply done, ' + text.length + ' chars: "' + text.slice(0, 120) + '"');
               if (text) pushTurn({ role: "assistant", content: text });
               assistantTextRef.current = "";
               activeRespRef.current = null;
@@ -290,6 +295,7 @@ export default function RealtimeVoiceSession({
                 const finalText = (ev.transcript ?? userPartialRef.current.get(ev.item_id) ?? "").trim();
                 userPartialRef.current.delete(ev.item_id);
                 if (finalText) {
+                  vlog('REALTIME: you said: "' + finalText.slice(0, 120) + '"');
                   setYouSaid(finalText);
                   upsertUserTurn(ev.item_id, finalText);
                 }
@@ -312,12 +318,13 @@ export default function RealtimeVoiceSession({
           body: offer.sdp,
           headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/sdp" },
         });
+        vlog('REALTIME: sdp exchange status=' + sdpRes.status);
         if (!sdpRes.ok) throw new Error(`SDP ${sdpRes.status}`);
         await pc.setRemoteDescription({ type: "answer", sdp: await sdpRes.text() });
 
         setStatusBoth("listening");
       } catch (e) {
-        console.error("webrtc setup failed, falling back", e);
+        vlog('REALTIME: webrtc setup FAILED → falling back to classic. ' + String(e));
         if (!cancelled) onFallback();
         return;
       }

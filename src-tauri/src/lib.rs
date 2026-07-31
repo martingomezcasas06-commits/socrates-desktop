@@ -248,6 +248,24 @@ fn set_fullscreen_overlay(app: AppHandle, enable: bool, width: Option<f64>, heig
     overlay_panel(&app, enable, width, height);
 }
 
+/// Append a line to ~/Library/Logs/socrates-voice.log.
+///
+/// A release Tauri build has no devtools, so a webview `console.log` goes
+/// nowhere — which is exactly why voice-call bugs kept being diagnosed by
+/// guesswork. This gives the voice session somewhere real to write.
+#[tauri::command]
+fn debug_log(line: String) {
+    use std::io::Write;
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let mut path = std::path::PathBuf::from(home);
+    path.push("Library/Logs");
+    let _ = std::fs::create_dir_all(&path);
+    path.push("socrates-voice.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Park the companion window top-right, just under the menu bar, near the tray icon.
 /// Horizontally centred on the click point when we have one; clamped to the screen.
 fn position_companion(win: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>) {
@@ -334,6 +352,7 @@ pub fn run() {
             execute_action,
             set_fullscreen_overlay,
             screen_recording_allowed,
+            debug_log,
             request_screen_recording
         ])
         .on_window_event(|window, event| {

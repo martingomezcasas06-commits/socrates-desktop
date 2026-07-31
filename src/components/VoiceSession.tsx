@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
+import { vlog } from "../lib/vlog";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -92,7 +93,6 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
   const [status, setStatus] = useState<Status>("connecting");
   const [caption, setCaption] = useState("");      // last thing Socrates said
   const [reveal, setReveal] = useState(0);          // # of caption words shown (live, synced to speech)
-  const [turnId, setTurnId] = useState(0);          // bumps per Socrates reply → restarts the word animation
   const [youSaid, setYouSaid] = useState("");       // last thing you said
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");      // e.g. screen-recording not granted
@@ -102,6 +102,7 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
   const [transcript, setTranscript] = useState<Turn[]>([]);
   const [typed, setTyped] = useState("");
   const feedRef = useRef<HTMLDivElement>(null);
+  const capRef = useRef<HTMLDivElement>(null);   // caption viewport, follows the newest line
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -126,6 +127,14 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
   const lastVoiceTsRef = useRef(0);
   const segStartRef = useRef(0);
 
+  // The reveal stays synced to the spoken audio, but renders as ONE text node.
+  // This used to emit a <span class="vo-word"> per word; when that CSS rule was
+  // dropped in the redesign the spans lost their spacing and every caption came
+  // out as one run-on string of jammed-together words.
+  const shownCaption = caption
+    ? caption.split(/\s+/).slice(0, Math.max(reveal, 1)).join(" ")
+    : "";
+
   const setStatusBoth = (s: Status) => { statusRef.current = s; setStatus(s); };
   const pushTurn = useCallback((t: Turn) => {
     historyRef.current = [...historyRef.current, t];
@@ -142,7 +151,6 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
     // Show the line (cleared to 0 words) and start a fresh animation for this reply.
     setCaption(clean);
     setReveal(0);
-    setTurnId((n) => n + 1);
     try {
       const res = await fetch(`${API_URL}/api/coaching/speak`, {
         method: "POST",
@@ -320,6 +328,7 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
   // ── Lifecycle ──
   useEffect(() => {
     aliveRef.current = true;
+    vlog('CLASSIC: mounting (engine=old pipeline — realtime was unavailable)');
     let cancelled = false;
     (async () => {
       await floatWindow(ORB_W, ORB_H);
@@ -400,6 +409,12 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
     await takeTurn("turn");
   }
 
+  // Follow the newest caption line as it reveals.
+  useEffect(() => {
+    const el = capRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [shownCaption]);
+
   // Keep the transcript scrolled to the latest line in expanded view.
   useEffect(() => {
     if (expanded && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -423,6 +438,9 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
       <span className="vo-status">
         {STATUS_LABEL[status]}
         {level && <span className="vo-lvl">{level === "new" ? "intro" : level === "learning" ? "core" : "pro"}</span>}
+        {/* This engine only runs when the realtime call couldn't connect. Say so —
+            a silent downgrade made a broken call look like a broken product. */}
+        <span className="vo-lvl vo-lvl-warn" title="Realtime voice unavailable — using the classic engine">classic</span>
       </span>
       <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
         <Icon name={muted ? "eye" : "coach"} />
@@ -454,21 +472,14 @@ export default function VoiceSession({ session, tool, onEnd }: { session: Sessio
     );
   }
 
-  const capWords = caption ? caption.split(/\s+/) : [];
-
   return (
     <div className="voice-orb">
       <div className="vo-top">{statusHead}</div>
       {error ? (
         <div className="vo-cap"><p className="vo-cap-line vo-cap-err">{error}</p></div>
-      ) : caption && reveal > 0 ? (
-        // Live subtitles — words slide up + de-blur in, in time with the speech.
-        <div className="vo-cap" aria-live="polite">
-          <p className="vo-cap-line">
-            {capWords.slice(0, reveal).map((w, i) => (
-              <span key={`${turnId}:${i}`} className="vo-word">{w}</span>
-            ))}
-          </p>
+      ) : shownCaption ? (
+        <div className="vo-cap" aria-live="polite" ref={capRef}>
+          <p className="vo-cap-line">{shownCaption}</p>
         </div>
       ) : (
         <div className="vo-cap vo-cap-soft">
