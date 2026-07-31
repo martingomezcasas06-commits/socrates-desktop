@@ -29,7 +29,7 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-type Turn = { role: "user" | "assistant"; content: string };
+type Turn = { role: "user" | "assistant"; content: string; itemId?: string };
 type Status = "connecting" | "speaking" | "listening" | "thinking";
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -78,10 +78,24 @@ export default function RealtimeVoiceSession({
   const aliveRef = useRef(true);
   const statusRef = useRef<Status>("connecting");
   const assistantTextRef = useRef(""); // accumulates the current reply's transcript
+  const activeRespRef = useRef<string | null>(null); // id of the reply we're currently showing
+  const userPartialRef = useRef<Map<string, string>>(new Map()); // your speech, per item, while it transcribes
 
   const setStatusBoth = (s: Status) => { statusRef.current = s; setStatus(s); };
   const pushTurn = useCallback((t: Turn) => {
     setTranscript((prev) => [...prev, t]);
+  }, []);
+
+  /** Insert-or-update your own turn, keyed by the conversation item it belongs to. */
+  const upsertUserTurn = useCallback((itemId: string, content: string) => {
+    setTranscript((prev) => {
+      const i = prev.findIndex((t) => t.itemId === itemId);
+      if (i === -1) return [...prev, { role: "user", content, itemId }];
+      if (prev[i].content === content) return prev;
+      const next = [...prev];
+      next[i] = { ...next[i], content };
+      return next;
+    });
   }, []);
 
   const send = useCallback((event: Record<string, unknown>) => {
@@ -188,6 +202,11 @@ export default function RealtimeVoiceSession({
             type: "session.update",
             session: {
               type: "realtime",
+              // Audio ONLY. If the model also emits a text modality, we get two
+              // parallel streams (spoken-transcript + written answer) that are
+              // worded differently — interleaving them made captions read like
+              // nonsense that didn't match the voice.
+              output_modalities: ["audio"],
               audio: {
                 input: {
                   turn_detection: { type: "semantic_vad" },
@@ -203,43 +222,77 @@ export default function RealtimeVoiceSession({
 
         dc.onmessage = (msg) => {
           if (!aliveRef.current) return;
-          let ev: { type?: string; delta?: string; transcript?: string; error?: { message?: string } };
+          let ev: {
+            type?: string; delta?: string; transcript?: string;
+            response_id?: string; item_id?: string;
+            response?: { id?: string };
+            item?: { id?: string; role?: string; type?: string; content?: { type?: string }[] };
+            error?: { message?: string };
+          };
           try { ev = JSON.parse(msg.data); } catch { return; }
 
           switch (ev.type) {
             case "input_audio_buffer.speech_started":
               // You started talking: he sees the screen you're talking about.
+              // The server cancels whatever he was saying (barge-in), so stop
+              // accepting that reply's words — otherwise the cut-off sentence
+              // bleeds into the next one.
+              activeRespRef.current = null;
               setStatusBoth("listening");
               sendScreen();
               break;
             case "response.created":
+              activeRespRef.current = ev.response?.id ?? null;
               setStatusBoth("thinking");
               assistantTextRef.current = "";
               setCaption("");
               break;
-            // Both event names appear depending on output modality — accept either.
-            case "response.output_text.delta":
+            // The transcript of what he ACTUALLY SPEAKS — the only stream we show.
             case "response.output_audio_transcript.delta":
-              if (ev.delta) {
+              // Ignore deltas from a superseded reply (barge-in leaves stragglers).
+              if (ev.delta && (!ev.response_id || ev.response_id === activeRespRef.current)) {
                 setStatusBoth("speaking");
                 assistantTextRef.current += ev.delta;
                 setCaption(assistantTextRef.current);
               }
               break;
-            case "response.output_audio_transcript.done":
             case "response.done": {
               const text = assistantTextRef.current.trim();
-              if (ev.type === "response.done") {
-                if (text) pushTurn({ role: "assistant", content: text });
-                assistantTextRef.current = "";
-                if (statusRef.current !== "listening") setStatusBoth("listening");
-              }
+              if (text) pushTurn({ role: "assistant", content: text });
+              assistantTextRef.current = "";
+              activeRespRef.current = null;
+              if (statusRef.current !== "listening") setStatusBoth("listening");
               break;
             }
+            // Your speech becomes a chat bubble the moment the turn is captured, then
+            // fills in as it transcribes. Verified against the live API: the
+            // transcription can land AFTER his reply, so appending on completion put
+            // your question BELOW his answer. Reserving the slot early fixes the order.
+            case "conversation.item.added":
+              if (
+                ev.item?.role === "user" &&
+                ev.item?.content?.some((c) => c?.type === "input_audio") &&
+                ev.item.id
+              ) {
+                upsertUserTurn(ev.item.id, "");
+              }
+              break;
+            case "conversation.item.input_audio_transcription.delta":
+              if (ev.item_id && ev.delta) {
+                const soFar = (userPartialRef.current.get(ev.item_id) ?? "") + ev.delta;
+                userPartialRef.current.set(ev.item_id, soFar);
+                setYouSaid(soFar);
+                upsertUserTurn(ev.item_id, soFar);
+              }
+              break;
             case "conversation.item.input_audio_transcription.completed":
-              if (ev.transcript?.trim()) {
-                setYouSaid(ev.transcript.trim());
-                pushTurn({ role: "user", content: ev.transcript.trim() });
+              if (ev.item_id) {
+                const finalText = (ev.transcript ?? userPartialRef.current.get(ev.item_id) ?? "").trim();
+                userPartialRef.current.delete(ev.item_id);
+                if (finalText) {
+                  setYouSaid(finalText);
+                  upsertUserTurn(ev.item_id, finalText);
+                }
               }
               break;
             case "error":
