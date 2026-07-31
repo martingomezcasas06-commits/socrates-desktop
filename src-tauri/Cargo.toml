@@ -23,6 +23,9 @@ enigo = "0.2"
 xcap = "0.9"
 base64 = "0.22"
 image = "0.25"
+# Native HTTPS for the realtime SDP handshake — the WKWebView blocks that
+# cross-origin POST to api.openai.com (surfaces only as "TypeError: Load failed").
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }

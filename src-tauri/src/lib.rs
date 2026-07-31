@@ -248,6 +248,31 @@ fn set_fullscreen_overlay(app: AppHandle, enable: bool, width: Option<f64>, heig
     overlay_panel(&app, enable, width, height);
 }
 
+/// Perform the realtime WebRTC offer/answer exchange natively.
+///
+/// The webview cannot do this itself: posting the SDP offer to api.openai.com
+/// from origin `tauri://localhost` is cross-origin, and WKWebView drops it with
+/// only "TypeError: Load failed" — which made every realtime call fail and fall
+/// back to the old voice engine. Doing it from Rust has no CORS at all.
+#[tauri::command]
+async fn realtime_sdp(secret: String, model: String, offer: String) -> Result<String, String> {
+    let url = format!("https://api.openai.com/v1/realtime/calls?model={model}");
+    let res = reqwest::Client::new()
+        .post(url)
+        .header("Authorization", format!("Bearer {secret}"))
+        .header("Content-Type", "application/sdp")
+        .body(offer)
+        .send()
+        .await
+        .map_err(|e| format!("sdp request failed: {e}"))?;
+    let status = res.status();
+    let body = res.text().await.map_err(|e| format!("sdp read failed: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("sdp {}: {}", status, body.chars().take(200).collect::<String>()));
+    }
+    Ok(body)
+}
+
 /// Append a line to ~/Library/Logs/socrates-voice.log.
 ///
 /// A release Tauri build has no devtools, so a webview `console.log` goes
@@ -353,6 +378,7 @@ pub fn run() {
             set_fullscreen_overlay,
             screen_recording_allowed,
             debug_log,
+            realtime_sdp,
             request_screen_recording
         ])
         .on_window_event(|window, event| {

@@ -132,6 +132,7 @@ export default function RealtimeVoiceSession({
 
       // 1. Ephemeral key from our server (bumps session count, builds tutor instructions)
       let secret = "";
+      let modelName = "gpt-realtime-2.1";
       try {
         const res = await fetch(`${API_URL}/api/coaching/realtime-session`, {
           method: "POST",
@@ -141,6 +142,7 @@ export default function RealtimeVoiceSession({
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { client_secret: string; level?: string; model?: string };
         secret = data.client_secret;
+        modelName = data.model ?? modelName;
         vlog('REALTIME: mint ok, model=' + data.model);
         if (data.level) setLevel(data.level);
       } catch (e) {
@@ -313,14 +315,33 @@ export default function RealtimeVoiceSession({
         // 3. SDP handshake with the ephemeral key
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        const sdpRes = await fetch("https://api.openai.com/v1/realtime/calls", {
-          method: "POST",
-          body: offer.sdp,
-          headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/sdp" },
-        });
-        vlog('REALTIME: sdp exchange status=' + sdpRes.status);
-        if (!sdpRes.ok) throw new Error(`SDP ${sdpRes.status}`);
-        await pc.setRemoteDescription({ type: "answer", sdp: await sdpRes.text() });
+        // The SDP handshake CANNOT go directly from the webview: posting to
+        // api.openai.com from origin tauri://localhost is cross-origin and
+        // WKWebView drops it with only "TypeError: Load failed" — which is what
+        // sent every call to the fallback engine. Do it natively in Rust (no CORS
+        // at all); in a plain browser, go through our server instead.
+        let answerSdp: string;
+        if (IS_TAURI) {
+          answerSdp = await tauriInvoke<string>("realtime_sdp", {
+            secret, model: modelName, offer: offer.sdp ?? "",
+          });
+          vlog('REALTIME: sdp exchange ok (native), ' + answerSdp.length + ' chars');
+        } else {
+          const r = await fetch(`${API_URL}/api/coaching/realtime-sdp?model=${encodeURIComponent(modelName)}`, {
+            method: "POST",
+            body: offer.sdp,
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              "X-Realtime-Secret": secret,
+              "Content-Type": "application/sdp",
+            },
+          });
+          if (!r.ok) throw new Error(`SDP ${r.status}`);
+          answerSdp = await r.text();
+          vlog('REALTIME: sdp exchange ok (proxy), ' + answerSdp.length + ' chars');
+        }
+        await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
 
         setStatusBoth("listening");
       } catch (e) {
