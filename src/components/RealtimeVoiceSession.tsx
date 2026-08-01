@@ -20,6 +20,8 @@ import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
 import PlanetOrb from "./PlanetOrb";
 import { vlog } from "../lib/vlog";
+import { apiFetch } from "../lib/api";
+import { useSmoothText } from "../lib/useSmoothText";
 import { floatWindow, restoreWindow, captureScreen, ORB_W, ORB_H, EXP_W, EXP_H } from "./VoiceSession";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -34,10 +36,10 @@ type Turn = { role: "user" | "assistant"; content: string; itemId?: string };
 type Status = "connecting" | "speaking" | "listening" | "thinking";
 
 const STATUS_LABEL: Record<Status, string> = {
-  connecting: "Connecting…",
-  speaking: "Socrates is speaking",
-  listening: "Listening…",
-  thinking: "Thinking…",
+  connecting: "Connecting",
+  speaking: "Speaking",
+  listening: "Listening",
+  thinking: "Thinking",
 };
 
 const IDLE_SHOT_MS = 10000; // periodic screen refresh while nobody is talking
@@ -55,6 +57,9 @@ export default function RealtimeVoiceSession({
 }) {
   const [status, setStatus] = useState<Status>("connecting");
   const [caption, setCaption] = useState("");        // live caption text, streamed
+  // Rendered instead of `caption`: glides in character by character so the
+  // words read as written rather than popping in a lump per delta.
+  const shownCaption = useSmoothText(caption);
   const [youSaid, setYouSaid] = useState("");
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");
@@ -134,9 +139,9 @@ export default function RealtimeVoiceSession({
       let secret = "";
       let modelName = "gpt-realtime-2.1";
       try {
-        const res = await fetch(`${API_URL}/api/coaching/realtime-session`, {
+        const res = await apiFetch(`${API_URL}/api/coaching/realtime-session`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tool }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -327,11 +332,10 @@ export default function RealtimeVoiceSession({
           });
           vlog('REALTIME: sdp exchange ok (native), ' + answerSdp.length + ' chars');
         } else {
-          const r = await fetch(`${API_URL}/api/coaching/realtime-sdp?model=${encodeURIComponent(modelName)}`, {
+          const r = await apiFetch(`${API_URL}/api/coaching/realtime-sdp?model=${encodeURIComponent(modelName)}`, {
             method: "POST",
             body: offer.sdp,
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
               "X-Realtime-Secret": secret,
               "Content-Type": "application/sdp",
             },
@@ -437,7 +441,7 @@ export default function RealtimeVoiceSession({
     <>
       <PlanetOrb status={status} size={40} innerRef={planetRef} />
       <span className="vo-status">
-        {STATUS_LABEL[status]}
+        <span className="vo-status-text">{STATUS_LABEL[status]}</span>
         {level && <span className="vo-lvl">{level === "new" ? "intro" : level === "learning" ? "core" : "pro"}</span>}
       </span>
       <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
@@ -480,7 +484,7 @@ export default function RealtimeVoiceSession({
         // newest line, and the top edge fades out. No per-word animation — with a
         // streaming transcript that only made the layout jitter.
         <div className="vo-cap" aria-live="polite" ref={capRef}>
-          <p className="vo-cap-line">{caption}</p>
+          <p className="vo-cap-line">{shownCaption}</p>
         </div>
       ) : (
         <div className="vo-cap vo-cap-soft">

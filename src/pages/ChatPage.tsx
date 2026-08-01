@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
 import ToolLogo from "../components/ToolLogo";
+import { apiFetch } from "../lib/api";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -79,11 +80,10 @@ export default function ChatPage({ session }: { session: Session }) {
     setMessages(next);
 
     try {
-      const res = await fetch(`${API_URL}/api/chat/employee-chat`, {
+      const res = await apiFetch(`${API_URL}/api/chat/employee-chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ messages: next.map((m) => ({ role: m.role, content: m.content })) }),
       });

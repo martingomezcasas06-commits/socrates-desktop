@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
 import { vlog } from "../lib/vlog";
+import { freshToken } from "../lib/api";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -83,10 +84,10 @@ type Turn = { role: "user" | "assistant"; content: string };
 type Status = "connecting" | "speaking" | "listening" | "thinking";
 
 const STATUS_LABEL: Record<Status, string> = {
-  connecting: "Connecting…",
-  speaking: "Socrates is speaking",
-  listening: "Listening…",
-  thinking: "Thinking…",
+  connecting: "Connecting",
+  speaking: "Speaking",
+  listening: "Listening",
+  thinking: "Thinking",
 };
 
 export default function VoiceSession({
@@ -141,9 +142,13 @@ export default function VoiceSession({
   // This used to emit a <span class="vo-word"> per word; when that CSS rule was
   // dropped in the redesign the spans lost their spacing and every caption came
   // out as one run-on string of jammed-together words.
-  const shownCaption = caption
+  // Word count stays synced to the spoken audio, but the characters within each
+  // step glide in rather than the whole word popping — same reading feel as the
+  // realtime engine.
+  const revealedWords = caption
     ? caption.split(/\s+/).slice(0, Math.max(reveal, 1)).join(" ")
     : "";
+  const shownCaption = useSmoothText(revealedWords);
 
   const setStatusBoth = (s: Status) => { statusRef.current = s; setStatus(s); };
   const pushTurn = useCallback((t: Turn) => {
@@ -151,7 +156,9 @@ export default function VoiceSession({
     setTranscript([...historyRef.current]);
   }, []);
 
-  const authHeaders = useCallback(() => ({ Authorization: `Bearer ${session.access_token}` }), [session.access_token]);
+  // Ask for a token per request — the session prop is captured at login and
+  // goes stale after an hour, which 401'd the whole app.
+  const authHeaders = useCallback(async () => ({ Authorization: `Bearer ${await freshToken()}` }), []);
 
   // Speak a reply, then return to listening. Interruptible via stopSpeaking().
   const speak = useCallback(async (text: string) => {
@@ -164,7 +171,7 @@ export default function VoiceSession({
     try {
       const res = await fetch(`${API_URL}/api/coaching/speak`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ text: clean }),
       });
       if (!res.ok) { setError("Couldn't generate speech."); setReveal(words.length); setStatusBoth("listening"); return; }
@@ -221,7 +228,7 @@ export default function VoiceSession({
       const screenshot = latestShotRef.current || (IS_TAURI ? await captureScreen() : "");
       const res = await fetch(`${API_URL}/api/coaching/voice`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ messages: historyRef.current.slice(-12), screenshot, tool, taught: taughtRef.current.slice(-6), phase }),
       });
       if (!res.ok) {
@@ -254,7 +261,7 @@ export default function VoiceSession({
     try {
       const res = await fetch(`${API_URL}/api/coaching/transcribe`, {
         method: "POST",
-        headers: { "Content-Type": blob.type || "audio/webm", ...authHeaders() },
+        headers: { "Content-Type": blob.type || "audio/webm", ...(await authHeaders()) },
         body: blob,
       });
       const data = res.ok ? (await res.json()) as { text?: string } : { text: "" };
@@ -446,7 +453,7 @@ export default function VoiceSession({
     <>
       <span className={`vo-dot ${status}`} />
       <span className="vo-status">
-        {STATUS_LABEL[status]}
+        <span className="vo-status-text">{STATUS_LABEL[status]}</span>
         {level && <span className="vo-lvl">{level === "new" ? "intro" : level === "learning" ? "core" : "pro"}</span>}
         {/* This engine only runs when the realtime call couldn't connect. Say so —
             a silent downgrade made a broken call look like a broken product. */}

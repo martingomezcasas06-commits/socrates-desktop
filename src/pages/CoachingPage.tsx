@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
+import { apiFetch } from "../lib/api";
 import VoiceSession from "../components/VoiceSession";
 import RealtimeVoiceSession from "../components/RealtimeVoiceSession";
 
@@ -163,9 +164,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       setError("");
       setGuidance((g) => g || "Looking at your screen…");
       const phase = startPhaseRef.current ? "start" : "tick";
-      const res = await fetch(`${API_URL}/api/coaching/analyze`, {
+      const res = await apiFetch(`${API_URL}/api/coaching/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ screenshot, tool, taught: taughtRef.current.slice(-4), phase }),
       });
       if (!res.ok) { setError(`Socrates couldn't analyze the screen (HTTP ${res.status}).`); return; }
@@ -264,9 +265,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     while (autonomousRef.current) {
       try {
         const screenshot = await captureScreen();
-        const res = await fetch(`${API_URL}/api/coaching/autonomous`, {
+        const res = await apiFetch(`${API_URL}/api/coaching/autonomous`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ screenshot, tool, log: autonomousLog }),
         });
         if (!res.ok) { autonomousRef.current = false; break; }
@@ -306,9 +307,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     setQa((prev) => [...prev, { q, a: null }]);
     try {
       const screenshot = await captureScreen();
-      const res = await fetch(`${API_URL}/api/coaching/analyze`, {
+      const res = await apiFetch(`${API_URL}/api/coaching/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ screenshot, tool, question: q, history: qa.filter((t): t is { q: string; a: string } => t.a !== null).slice(-6) }),
       });
       const data: AnalysisResult = await res.json();
@@ -565,9 +566,9 @@ function CoachingChat({ session, tool }: { session: Session; tool: string }) {
     const next: ChatMsg[] = [...messages, { role: "user", content: t }];
     setMessages(next);
     try {
-      const res = await fetch(`${API_URL}/api/chat/employee-chat`, {
+      const res = await apiFetch(`${API_URL}/api/chat/employee-chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: next }),
       });
       const reply = await res.text();
