@@ -12,10 +12,10 @@
  *   mic → VAD segment → /api/coaching/transcribe → /api/coaching/voice → /api/coaching/speak → play
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
 import { vlog } from "../lib/vlog";
 import { freshToken } from "../lib/api";
+import { useSmoothText } from "../lib/useSmoothText";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -90,13 +90,12 @@ const STATUS_LABEL: Record<Status, string> = {
   thinking: "Thinking",
 };
 
+// No session prop: every request mints its own fresh token via lib/api.
 export default function VoiceSession({
-  session,
   tool,
   onEnd,
   fallbackReason = "",
 }: {
-  session: Session;
   tool: string;
   onEnd: () => void;
   fallbackReason?: string;

@@ -358,14 +358,12 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   if (voiceActive) {
     return voiceFallback ? (
       <VoiceSession
-        session={session}
         tool={tool}
         onEnd={() => setVoiceActive(false)}
         fallbackReason={voiceFallbackReason}
       />
     ) : (
       <RealtimeVoiceSession
-        session={session}
         tool={tool}
         onEnd={() => setVoiceActive(false)}
         onFallback={(reason) => { setVoiceFallbackReason(reason); setVoiceFallback(true); }}
@@ -387,7 +385,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       </div>
 
       {tab === "chat" ? (
-        <CoachingChat session={session} tool={tool} />
+        <CoachingChat tool={tool} />
       ) : mode === "idle" ? (
         /* ── IDLE ── */
         <div className="coach-idle anim">
@@ -544,7 +542,8 @@ function TryThisBox({ text }: { text: string }) {
 // ── Embedded chat (the "Chat" sub-tab — in-context conversation while coaching) ──
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-function CoachingChat({ session, tool }: { session: Session; tool: string }) {
+// No session prop: apiFetch attaches a freshly-minted token per request.
+function CoachingChat({ tool }: { tool: string }) {
   const [messages, setMessages] = useState<ChatMsg[]>([
     { role: "assistant", content: "I'm here while you work. Ask me anything about what you're doing." },
   ]);

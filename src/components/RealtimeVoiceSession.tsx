@@ -16,7 +16,6 @@
  * drop back to the classic pipeline (VoiceSession).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import Icon from "../Icon";
 import PlanetOrb from "./PlanetOrb";
 import { vlog } from "../lib/vlog";
@@ -44,13 +43,12 @@ const STATUS_LABEL: Record<Status, string> = {
 
 const IDLE_SHOT_MS = 10000; // periodic screen refresh while nobody is talking
 
+// No session prop: every request mints its own fresh token via lib/api.
 export default function RealtimeVoiceSession({
-  session,
   tool,
   onEnd,
   onFallback,
 }: {
-  session: Session;
   tool: string;
   onEnd: () => void;
   onFallback: (reason: string) => void;
