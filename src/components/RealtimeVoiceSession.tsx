@@ -42,6 +42,17 @@ const STATUS_LABEL: Record<Status, string> = {
 };
 
 const IDLE_SHOT_MS = 10000; // periodic screen refresh while nobody is talking
+const PERM_RECHECK_MS = 3000; // poll for Screen Recording being switched on mid-call
+
+// Loudness (RMS, 0–1) the mic must reach for a turn to count as real speech.
+// Room tone sits around 0.002–0.01; talking clears 0.05 comfortably. Anything
+// under this is silence, and a transcript claimed for it is a hallucination.
+const SPEECH_RMS_MIN = 0.02;
+
+// Biggest base64 screenshot we'll put on the data channel. The SCTP limit is
+// ~256 KB per message and the JSON wrapper adds a little, so stay well under it.
+const MAX_SHOT_B64 = 180_000;
+
 
 // No session prop: every request mints its own fresh token via lib/api.
 export default function RealtimeVoiceSession({
@@ -57,13 +68,20 @@ export default function RealtimeVoiceSession({
   const [caption, setCaption] = useState("");        // live caption text, streamed
   // Rendered instead of `caption`: glides in character by character so the
   // words read as written rather than popping in a lump per delta.
-  const shownCaption = useSmoothText(caption);
+  // Opened when Socrates is actually audible; see the analyser and the failsafe
+  // timer on response.created. Starts true so the very first frame is never stuck.
+  const audibleRef = useRef(true);
+  const audibleTimerRef = useRef<number | null>(null);
+  const shownCaption = useSmoothText(caption, { gateRef: audibleRef });
   const [youSaid, setYouSaid] = useState("");
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // True between response.created and response.done — i.e. while Socrates is
+  // actually speaking. Drives the live, still-being-written bubble in the chat.
+  const [streaming, setStreaming] = useState(false);
   const [transcript, setTranscript] = useState<Turn[]>([]);
   const [typed, setTyped] = useState("");
   const feedRef = useRef<HTMLDivElement>(null);
@@ -78,12 +96,34 @@ export default function RealtimeVoiceSession({
   const vizRafRef = useRef<number | null>(null);
   const latestShotRef = useRef<string>("");
   const shotTimerRef = useRef<number | null>(null);
+  const permTimerRef = useRef<number | null>(null);
   const idleShotRef = useRef<number>(0);
   const aliveRef = useRef(true);
   const statusRef = useRef<Status>("connecting");
   const assistantTextRef = useRef(""); // accumulates the current reply's transcript
   const activeRespRef = useRef<string | null>(null); // id of the reply we're currently showing
+  const droppedRespRef = useRef<Set<string>>(new Set()); // superseded replies we've already logged
   const userPartialRef = useRef<Map<string, string>>(new Map()); // your speech, per item, while it transcribes
+
+  // Mic loudness, used to throw away hallucinated transcripts (see micPeak below).
+  const micCtxRef = useRef<AudioContext | null>(null);
+  const micTimerRef = useRef<number | null>(null);
+  const micWatchdogRef = useRef<number | null>(null);
+  // Mirrors the `muted` state for code that runs outside React's render cycle
+  // (the watchdog), so recovering the mic can't silently un-mute you.
+  const mutedRef = useRef(false);
+  const micGateOkRef = useRef(false);                           // false ⇒ never drop, we can't measure
+  const micPeakRef = useRef(0);                                 // loudest moment of the turn being spoken
+  const lastTurnPeakRef = useRef(0);                            // that peak, frozen when the turn ended
+  const itemPeakRef = useRef<Map<string, number>>(new Map());   // …then keyed by conversation item
+  // Only ONE response may exist at a time. Sending a second is a protocol error,
+  // so creates are gated and deferred rather than fired blind.
+  const respBusyRef = useRef(false);
+  const pendingCreateRef = useRef(false);
+  const pendingInstrRef = useRef<string | null>(null);
+  const pendingTimerRef = useRef<number | null>(null);
+  const errTimerRef = useRef<number | null>(null);
+  const screenOkRef = useRef(false);
 
   const setStatusBoth = (s: Status) => { statusRef.current = s; setStatus(s); };
   const pushTurn = useCallback((t: Turn) => {
@@ -104,8 +144,17 @@ export default function RealtimeVoiceSession({
 
   const send = useCallback((event: Record<string, unknown>) => {
     const dc = dcRef.current;
-    if (dc && dc.readyState === "open") {
-      try { dc.send(JSON.stringify(event)); } catch { /* channel closing */ }
+    if (!dc || dc.readyState !== "open") return;
+    const payload = JSON.stringify(event);
+    try {
+      dc.send(payload);
+    } catch (e) {
+      // NEVER swallow this again. A silent throw here is how screenshots went
+      // missing for weeks: an oversized frame exceeded the channel's message
+      // limit, send() threw, and the app carried on as if the model could see.
+      vlog('REALTIME: dc.send FAILED for ' + String(event.type) +
+        ' (' + payload.length + ' bytes, limit ' +
+        ((dc as RTCDataChannel & { maxMessageSize?: number }).maxMessageSize ?? '?') + '): ' + String(e));
     }
   }, []);
 
@@ -114,6 +163,7 @@ export default function RealtimeVoiceSession({
     const shot = latestShotRef.current;
     if (!shot) return;
     idleShotRef.current = Date.now();
+    vlog('REALTIME: sending screenshot (' + Math.round(shot.length / 1024) + ' KB base64)');
     send({
       type: "conversation.item.create",
       item: {
@@ -123,6 +173,60 @@ export default function RealtimeVoiceSession({
       },
     });
   }, [send]);
+
+  /**
+   * Ask for a reply, but never while one is running.
+   *
+   * With semantic VAD the *server* creates a response the moment it decides you
+   * stopped talking, so a manual create can collide with one we never asked for
+   * ("Conversation already has an active response in progress"). The loser is
+   * dropped, which is how a greeting or a typed message could vanish. Deferring
+   * instead of firing blind means the request survives.
+   */
+  const requestResponse = useCallback((instructions?: string) => {
+    const create = () => send(
+      instructions
+        ? { type: "response.create", response: { instructions } }
+        : { type: "response.create" },
+    );
+    if (respBusyRef.current) {
+      pendingCreateRef.current = true;
+      pendingInstrRef.current = instructions ?? null;
+      // Safety net. The queue is drained by `response.done`, so if that never
+      // arrives — a cancel that emits nothing, a dropped event, a reply the
+      // server abandoned — a typed question would sit here forever and look
+      // like the app simply ignored it. That was the actual "typing does
+      // nothing" bug: the create was refused and nobody ever retried it.
+      if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = window.setTimeout(() => {
+        if (!pendingCreateRef.current) return;
+        pendingCreateRef.current = false;
+        vlog('REALTIME: queued response.create timed out — forcing it');
+        respBusyRef.current = true;
+        create();
+      }, 2500);
+      return;
+    }
+    respBusyRef.current = true;
+    create();
+  }, [send]);
+
+  /**
+   * Was this turn too quiet to be real speech? If we never got the analyser
+   * running we can't tell, so nothing is dropped and behaviour is as before.
+   */
+  const isSilentItem = useCallback((itemId: string, known?: number) => {
+    if (!micGateOkRef.current) return false;
+    const peak = known ?? itemPeakRef.current.get(itemId);
+    return peak !== undefined && peak < SPEECH_RMS_MIN;
+  }, []);
+
+  /** Surface an error, but don't let it sit over the captions for the whole call. */
+  const showError = useCallback((msg: string) => {
+    setError(msg);
+    if (errTimerRef.current) clearTimeout(errTimerRef.current);
+    errTimerRef.current = window.setTimeout(() => setError(""), 6000);
+  }, []);
 
   // ── Lifecycle: float the orb, connect the call ──
   useEffect(() => {
@@ -156,13 +260,116 @@ export default function RealtimeVoiceSession({
 
       // 2. Mic + WebRTC peer connection
       try {
-        const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        const mic = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            // AGC winds the gain up during quiet stretches until room tone looks
+            // like speech — which is exactly what the VAD and the transcriber
+            // then hallucinate words out of. Keep the true noise floor.
+            autoGainControl: false,
+          },
+        });
         if (cancelled) { mic.getTracks().forEach((t) => t.stop()); return; }
         micRef.current = mic;
 
+        // THE MIC IS SENT RAW. Nothing here may ever attenuate it.
+        //
+        // There WAS a noise gate: the mic was piped through a GainNode into a
+        // MediaStreamDestination and muted between phrases. It went wrong twice —
+        // an AudioContext starts suspended, so that destination could emit pure
+        // silence for an entire call, and no fixed loudness threshold could ever
+        // separate Martin's voice from his room (measured: speech 0.058 vs
+        // chatter 0.06, overlapping). It was also never what fixed the truncated
+        // replies — `interrupt_response:false` did that, server-side.
+        //
+        // So the gate is gone. Web Audio is now ONLY a measurement tap feeding the
+        // hallucinated-transcript filter; it cannot make the microphone quieter.
+        const outTrack = mic.getTracks()[0];
+        outTrack.enabled = true;
+        // `muted` here is NOT our mute button — it is the browser telling us the
+        // OS stopped delivering audio from the device (sleep, an audio-route
+        // change, WKWebView suspending capture in a backgrounded panel). When that
+        // happens the call looks alive but Socrates simply stops hearing you.
+        outTrack.onmute = () => vlog('REALTIME: mic track went MUTED (source stopped delivering audio)');
+        outTrack.onunmute = () => vlog('REALTIME: mic track unmuted');
+        outTrack.onended = () => vlog('REALTIME: mic track ENDED');
+        try {
+          const mctx = new AudioContext();
+          micCtxRef.current = mctx;
+          void mctx.resume().catch(() => {});
+          const msrc = mctx.createMediaStreamSource(mic);
+          const manalyser = mctx.createAnalyser();
+          manalyser.fftSize = 512;
+          msrc.connect(manalyser);
+
+          const mbuf = new Uint8Array(manalyser.fftSize);
+          let sawSignal = false;
+          const startedAt = Date.now();
+          const mtick = () => {
+            if (!aliveRef.current) return;
+            manalyser.getByteTimeDomainData(mbuf);
+            let sum = 0;
+            for (let i = 0; i < mbuf.length; i++) { const v = (mbuf[i] - 128) / 128; sum += v * v; }
+            const rms = Math.sqrt(sum / mbuf.length);
+            if (rms > micPeakRef.current) micPeakRef.current = rms;
+
+            // If the analyser only ever reports digital silence it is broken (a
+            // suspended context, a tap that never connected). Stand the filter
+            // down rather than let it judge every transcript as "too quiet to be
+            // real" and delete the entire conversation.
+            if (rms > 0.0005) sawSignal = true;
+            if (!sawSignal && Date.now() - startedAt > 4000) {
+              vlog('REALTIME: analyser reads pure silence — hallucination filter disabled');
+              micGateOkRef.current = false;
+              if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null; }
+            }
+          };
+          // A TIMER, not rAF. rAF stops in an occluded/hidden window, and a frozen
+          // gate keeps its last gain — if that was 0, the mic goes silent for the
+          // rest of the call and Socrates simply stops hearing you. A timer keeps
+          // running, and the stall check below fails the gate OPEN rather than shut.
+          micTimerRef.current = window.setInterval(mtick, 33);
+          micGateOkRef.current = true;
+        } catch (e) {
+          // Any failure here must leave a WORKING call, not a dead mic.
+          micGateOkRef.current = false;
+          outTrack.enabled = true;
+          vlog('REALTIME: mic gate unavailable, mic left fully open. ' + String(e));
+        }
+
         const pc = new RTCPeerConnection();
         pcRef.current = pc;
-        pc.addTrack(mic.getTracks()[0]);
+        const micSender = pc.addTrack(outTrack);
+
+        // SELF-HEALING MIC. A dead microphone is indistinguishable from a working
+        // one until you notice nobody is answering — Martin's calls "went on mute
+        // after a while". So watch the track, and if the source stops delivering,
+        // get a new one and swap it into the live connection rather than letting
+        // the rest of the call carry on deaf.
+        micWatchdogRef.current = window.setInterval(async () => {
+          if (!aliveRef.current) return;
+          const t = micRef.current?.getTracks()[0];
+          const broken = !t || t.readyState === "ended" || t.muted;
+          if (!broken) return;
+          vlog('REALTIME: mic looks dead (readyState=' + (t?.readyState ?? 'gone') +
+            ', muted=' + (t?.muted ?? '?') + ') — reacquiring');
+          try {
+            const fresh = await navigator.mediaDevices.getUserMedia({
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+            });
+            const nt = fresh.getTracks()[0];
+            nt.enabled = !mutedRef.current;   // respect the user's own mute button
+            await micSender.replaceTrack(nt);
+            micRef.current?.getTracks().forEach((old) => old.stop());
+            micRef.current = fresh;
+            nt.onmute = () => vlog('REALTIME: mic track went MUTED (source stopped delivering audio)');
+            nt.onended = () => vlog('REALTIME: mic track ENDED');
+            vlog('REALTIME: mic recovered');
+          } catch (e) {
+            vlog('REALTIME: mic reacquire FAILED: ' + String(e));
+          }
+        }, 3000);
 
         // Socrates' voice comes back as a remote track
         pc.ontrack = (e) => {
@@ -193,6 +400,9 @@ export default function RealtimeVoiceSession({
               const target = Math.min(1, rms * 7);
               smoothed += (target - smoothed) * (target > smoothed ? 0.5 : 0.12);
               planetRef.current?.style.setProperty("--amp", smoothed.toFixed(3));
+              // First real sound of this reply: release the caption. Until now it
+              // has been held at zero so it can't run ahead of the voice.
+              if (!audibleRef.current && smoothed > 0.04) audibleRef.current = true;
               vizRafRef.current = requestAnimationFrame(tick);
             };
             vizRafRef.current = requestAnimationFrame(tick);
@@ -218,15 +428,42 @@ export default function RealtimeVoiceSession({
               output_modalities: ["audio"],
               audio: {
                 input: {
-                  turn_detection: { type: "semantic_vad" },
+                  // "low" eagerness: wait for a real pause before calling the turn
+                  // over. On the default the model committed turns on room noise,
+                  // which both cut Socrates off mid-sentence and handed the
+                  // transcriber silence to invent words from.
+                  //
+                  // interrupt_response:false is the one that makes the transcript
+                  // readable. Detected speech still starts a new turn, but it no
+                  // longer CANCELS the reply in progress — so a cough, a door, or
+                  // someone else talking can't truncate a sentence any more. That
+                  // was the cause of the `reply done, 0 chars` entries and every
+                  // half-finished caption. Verified accepted and echoed back by
+                  // the live API before shipping. Deliberate consequence: barging
+                  // in by voice no longer stops him mid-sentence; typing does
+                  // (sendTyped cancels explicitly).
+                  turn_detection: {
+                    type: "semantic_vad",
+                    eagerness: "low",
+                    interrupt_response: false,
+                    create_response: true,
+                  },
                   transcription: { model: "gpt-4o-mini-transcribe" },
                 },
               },
             },
           });
-          // Open the call: current screen + a nudge so Socrates greets first.
+          // Open the call with an actual greeting. Left to its own instructions the
+          // tutor dives straight into a lesson ("Nice, let's level up with a more
+          // advanced move…") because Martin reads as an advanced returning user —
+          // no hello, no name. A per-response `instructions` override fixes it
+          // here, without redeploying the server prompt.
           sendScreen();
-          send({ type: "response.create" });
+          requestResponse(
+            "Open the call: greet Martin warmly by name in ONE short spoken sentence, " +
+            "then ask one simple question about what he'd like to work on. " +
+            "Do not teach or give advice yet — just say hello and hand the turn back.",
+          );
         };
 
         dc.onmessage = (msg) => {
@@ -242,27 +479,48 @@ export default function RealtimeVoiceSession({
 
           switch (ev.type) {
             case "input_audio_buffer.speech_started":
-              // You started talking: he sees the screen you're talking about.
-              // The server cancels whatever he was saying (barge-in), so stop
-              // accepting that reply's words — otherwise the cut-off sentence
-              // bleeds into the next one.
-              activeRespRef.current = null;
-              setStatusBoth("listening");
+              // Someone started talking — NOT necessarily you, and not necessarily
+              // an interruption. This used to drop the in-flight reply on the spot,
+              // which in a room with other voices truncated nearly every sentence
+              // and reduced the greeting to nothing. We now wait for the server to
+              // actually cancel (it emits response.done), and only then stop
+              // accepting that reply's words. Stragglers are still filtered, by
+              // response id, in the delta case below.
+              micPeakRef.current = 0;   // start measuring this turn's loudness
               sendScreen();
+              break;
+            case "input_audio_buffer.speech_stopped":
+              // Freeze the peak now; the item it belongs to is announced next.
+              lastTurnPeakRef.current = micPeakRef.current;
               break;
             case "response.created":
               activeRespRef.current = ev.response?.id ?? null;
+              respBusyRef.current = true;
+              setStreaming(true);
+              // Hold the caption until this reply is audible, but NEVER longer
+              // than 2s — a silent reply or a stalled analyser must not leave the
+              // transcript frozen. Failing open costs a little lead; failing shut
+              // costs the whole feature.
+              audibleRef.current = false;
+              if (audibleTimerRef.current) clearTimeout(audibleTimerRef.current);
+              audibleTimerRef.current = window.setTimeout(() => { audibleRef.current = true; }, 2000);
               setStatusBoth("thinking");
               assistantTextRef.current = "";
               setCaption("");
               break;
             // The transcript of what he ACTUALLY SPEAKS — the only stream we show.
             case "response.output_audio_transcript.delta":
-              // Ignore deltas from a superseded reply (barge-in leaves stragglers).
+              // Ignore deltas from a superseded reply (a cancelled response keeps
+              // leaking words for a moment after the server drops it).
               if (ev.delta && (!ev.response_id || ev.response_id === activeRespRef.current)) {
                 setStatusBoth("speaking");
                 assistantTextRef.current += ev.delta;
                 setCaption(assistantTextRef.current);
+              } else if (ev.delta && ev.response_id && !droppedRespRef.current.has(ev.response_id)) {
+                // Once per response, so a truncated caption is explainable from the log.
+                droppedRespRef.current.add(ev.response_id);
+                vlog('REALTIME: ignoring deltas from superseded response ' + ev.response_id +
+                  ' (active=' + (activeRespRef.current ?? 'none') + ')');
               }
               break;
             case "response.done": {
@@ -271,6 +529,15 @@ export default function RealtimeVoiceSession({
               if (text) pushTurn({ role: "assistant", content: text });
               assistantTextRef.current = "";
               activeRespRef.current = null;
+              respBusyRef.current = false;
+              setStreaming(false);
+              if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+              if (pendingCreateRef.current) {
+                pendingCreateRef.current = false;
+                const instr = pendingInstrRef.current;
+                pendingInstrRef.current = null;
+                requestResponse(instr ?? undefined);
+              }
               if (statusRef.current !== "listening") setStatusBoth("listening");
               break;
             }
@@ -284,11 +551,18 @@ export default function RealtimeVoiceSession({
                 ev.item?.content?.some((c) => c?.type === "input_audio") &&
                 ev.item.id
               ) {
-                upsertUserTurn(ev.item.id, "");
+                const peak = lastTurnPeakRef.current;
+                itemPeakRef.current.set(ev.item.id, peak);
+                // Silence never gets a bubble — see the transcription case below.
+                if (peak >= SPEECH_RMS_MIN) upsertUserTurn(ev.item.id, "");
               }
               break;
+            // gpt-4o-mini-transcribe invents fluent sentences — often in languages
+            // nobody in the room speaks — when handed near-silence. We can't stop it
+            // guessing, but we know how loud you actually were, so we can refuse the
+            // guess. Anything quieter than a whisper is dropped outright.
             case "conversation.item.input_audio_transcription.delta":
-              if (ev.item_id && ev.delta) {
+              if (ev.item_id && ev.delta && !isSilentItem(ev.item_id)) {
                 const soFar = (userPartialRef.current.get(ev.item_id) ?? "") + ev.delta;
                 userPartialRef.current.set(ev.item_id, soFar);
                 setYouSaid(soFar);
@@ -299,19 +573,37 @@ export default function RealtimeVoiceSession({
               if (ev.item_id) {
                 const finalText = (ev.transcript ?? userPartialRef.current.get(ev.item_id) ?? "").trim();
                 userPartialRef.current.delete(ev.item_id);
-                if (finalText) {
-                  vlog('REALTIME: you said: "' + finalText.slice(0, 120) + '"');
+                const peak = itemPeakRef.current.get(ev.item_id) ?? 1;
+                itemPeakRef.current.delete(ev.item_id);
+                if (finalText && isSilentItem(ev.item_id, peak)) {
+                  vlog('REALTIME: dropped hallucinated transcript (peak ' +
+                    peak.toFixed(4) + ' < ' + SPEECH_RMS_MIN + '): "' + finalText.slice(0, 60) + '"');
+                } else if (finalText) {
+                  vlog('REALTIME: you said (peak ' + peak.toFixed(3) + '): "' + finalText.slice(0, 120) + '"');
                   setYouSaid(finalText);
                   upsertUserTurn(ev.item_id, finalText);
                 }
               }
               break;
-            case "error":
+            case "error": {
               console.error("realtime error", ev);
-              if (ev.error?.message && !/transcription|truncat/i.test(ev.error.message)) {
-                setError(ev.error.message);
+              const m = ev.error?.message ?? "";
+              // A rejected response.create means the server already had one running,
+              // so our optimistic "busy" flag is right — but nothing will ever clear
+              // it unless we do, and then no manual create would fire again.
+              if (/active response/i.test(m)) {
+                // Our create was REFUSED. Whatever asked for it (a typed question,
+                // the opening greeting) gets nothing unless we retry once the
+                // current reply finishes. Not retrying was the silent-typing bug.
+                if (!activeRespRef.current) respBusyRef.current = false;
+                requestResponse();
               }
+              vlog('REALTIME: server error: ' + m);
+              // Protocol races and transcriber noise are ours to handle, not
+              // Martin's to read over his captions.
+              if (m && !/transcription|truncat|active response/i.test(m)) showError(m);
               break;
+            }
           }
         };
 
@@ -354,21 +646,104 @@ export default function RealtimeVoiceSession({
 
       // 4. Screen capture loop (warm frame + idle refresh into the conversation)
       if (IS_TAURI) {
-        try {
-          const ok = await tauriInvoke<boolean>("screen_recording_allowed");
-          if (!ok) {
-            try { await tauriInvoke("request_screen_recording"); } catch { /* noop */ }
-            setWarn("I can't see your screen yet — turn on Screen Recording for Socrates in System Settings, then quit and reopen.");
-          }
-        } catch { /* older build */ }
         const grab = async () => {
-          const s = await captureScreen();
+          // Without permission macOS still hands us a picture — the desktop
+          // wallpaper with every window stripped out. Sending that is worse than
+          // sending nothing: Socrates confidently described Martin's wallpaper
+          // back to him instead of saying he couldn't see. Capture only when the
+          // frame can actually contain his screen.
+          if (!screenOkRef.current) return;
+          // Small on purpose: this frame travels over the data channel, which
+          // hard-rejects any single message over ~256 KB. A busy screen can still
+          // surprise us, so measure and shrink again rather than trust one guess —
+          // an oversized frame doesn't degrade, it vanishes.
+          let s = await captureScreen(900, 50);
+          if (s && s.length > MAX_SHOT_B64) {
+            const first = s.length;
+            s = await captureScreen(640, 35);
+            vlog('REALTIME: screenshot too big (' + Math.round(first / 1024) +
+              ' KB) — recaptured at ' + Math.round(s.length / 1024) + ' KB');
+          }
+          if (s && s.length > MAX_SHOT_B64) {
+            vlog('REALTIME: screenshot STILL too big (' + Math.round(s.length / 1024) + ' KB) — skipping');
+            return;
+          }
           if (s) {
             latestShotRef.current = s;
             if (Date.now() - idleShotRef.current > IDLE_SHOT_MS) sendScreen();
           }
         };
-        void grab();
+
+        /** Tell Socrates, in the conversation itself, whether he has eyes. */
+        const announceScreen = (ok: boolean) => {
+          send({
+            type: "conversation.item.create",
+            item: {
+              type: "message", role: "user",
+              content: [{
+                type: "input_text",
+                text: ok
+                  ? "[system] Screen sharing is now ON. Images that follow are the user's live screen."
+                  : "[system] Screen sharing is OFF — you cannot see the user's screen at all. If asked, say so plainly and ask them to enable Screen Recording for Socrates in System Settings. Never describe or guess at what is on their screen.",
+              }],
+            },
+          });
+        };
+
+        const checkPerm = async (first: boolean) => {
+          let ok = false;
+          try { ok = await tauriInvoke<boolean>("screen_recording_allowed"); }
+          catch { ok = true; /* older build without the command: behave as before */ }
+          if (ok === screenOkRef.current && !first) return;
+          screenOkRef.current = ok;
+          vlog('REALTIME: screen recording permission = ' + ok);
+          if (ok) {
+            setWarn("");
+            if (!first) announceScreen(true);
+            void grab();
+          } else {
+            if (first) {
+              vlog('REALTIME: no screen permission — requesting, then attempting a capture to force the prompt');
+              try { await tauriInvoke("request_screen_recording"); } catch (e) { vlog('REALTIME: request_screen_recording threw: ' + String(e)); }
+              // AND actually attempt a capture. macOS raises the permission dialog
+              // when an app TRIES to record — CGRequestScreenCaptureAccess alone
+              // does not reliably prompt from a background thread. The previous
+              // build skipped capturing whenever permission was false, so nothing
+              // ever attempted, nothing ever prompted, and the app sat at
+              // "permission = false" forever. The frame is thrown away; this call
+              // exists purely to make macOS ask.
+              // A non-empty result here while permission is false means macOS
+              // silently handed back the wallpaper (denied, no error). An empty
+              // result means the capture itself failed. Both are worth knowing —
+              // they point at completely different problems.
+              try {
+                const probe = await captureScreen(640, 35);
+                vlog('REALTIME: capture probe returned ' + (probe ? Math.round(probe.length / 1024) + ' KB' : 'NOTHING'));
+                // Write the frame to disk so it can be OPENED and looked at. A
+                // denied capture returns the wallpaper with no error, so bytes
+                // alone can't tell success from failure — only the picture can.
+                const saved = await tauriInvoke<string>("save_capture_probe");
+                vlog('REALTIME: capture probe saved to ' + saved);
+              } catch (e) { vlog('REALTIME: capture probe threw: ' + String(e)); }
+              try {
+                const after = await tauriInvoke<boolean>("screen_recording_allowed");
+                vlog('REALTIME: permission re-check after prompt = ' + after);
+                if (after) {
+                  screenOkRef.current = true;
+                  vlog('REALTIME: screen recording granted after prompt');
+                  setWarn(""); announceScreen(true); void grab();
+                  return;
+                }
+              } catch { /* older build */ }
+            }
+            setWarn("I can't see your screen — turn on Screen Recording for Socrates in System Settings ▸ Privacy & Security, then reopen the app.");
+            announceScreen(false);
+          }
+        };
+
+        await checkPerm(true);
+        // Granting the permission mid-call should just start working.
+        permTimerRef.current = window.setInterval(() => void checkPerm(false), PERM_RECHECK_MS);
         shotTimerRef.current = window.setInterval(grab, 2500);
       }
     })();
@@ -377,12 +752,18 @@ export default function RealtimeVoiceSession({
       cancelled = true;
       aliveRef.current = false;
       if (shotTimerRef.current) clearInterval(shotTimerRef.current);
+      if (permTimerRef.current) clearInterval(permTimerRef.current);
+      if (errTimerRef.current) clearTimeout(errTimerRef.current);
+      if (audibleTimerRef.current) clearTimeout(audibleTimerRef.current);
       try { dcRef.current?.close(); } catch { /* noop */ }
       try { pcRef.current?.close(); } catch { /* noop */ }
       micRef.current?.getTracks().forEach((t) => t.stop());
       if (audioElRef.current) audioElRef.current.srcObject = null;
       if (vizRafRef.current) cancelAnimationFrame(vizRafRef.current);
+      if (micTimerRef.current) clearInterval(micTimerRef.current);
+      if (micWatchdogRef.current) clearInterval(micWatchdogRef.current);
       vizCtxRef.current?.close().catch(() => {});
+      micCtxRef.current?.close().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -390,8 +771,10 @@ export default function RealtimeVoiceSession({
   function toggleMute() {
     const next = !muted;
     setMuted(next);
+    mutedRef.current = next;
     const track = micRef.current?.getTracks()[0];
     if (track) track.enabled = !next;
+    vlog('REALTIME: mic ' + (next ? 'MUTED by user' : 'unmuted by user'));
   }
 
   async function toggleExpand() {
@@ -412,22 +795,36 @@ export default function RealtimeVoiceSession({
       type: "conversation.item.create",
       item: { type: "message", role: "user", content: [{ type: "input_text", text: t }] },
     });
-    send({ type: "response.create" });
+    // Typing is a deliberate interruption. If Socrates is mid-sentence, stop him
+    // and answer what was actually asked instead of queueing behind a reply to
+    // something else — and the cancel is what produces the response.done that
+    // releases the queued create.
+    if (respBusyRef.current) {
+      vlog('REALTIME: typed while replying — cancelling the in-flight response');
+      send({ type: "response.cancel" });
+    }
+    requestResponse();
   }
 
+  // Follow the conversation, including the line currently being written.
   useEffect(() => {
     if (expanded && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [transcript, expanded, status]);
+  }, [transcript, expanded, status, shownCaption]);
 
-  // Follow the newest caption line as it streams in.
+  // Keep the ticker pinned to the words being spoken. Depends on the SMOOTHED
+  // text, not the raw caption — that is what's actually on screen, and following
+  // the raw value scrolled ahead of the visible line.
   useEffect(() => {
     const el = capRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [caption]);
+  }, [shownCaption]);
 
   async function end() {
     aliveRef.current = false;
     if (shotTimerRef.current) clearInterval(shotTimerRef.current);
+    if (permTimerRef.current) clearInterval(permTimerRef.current);
+    if (micWatchdogRef.current) clearInterval(micWatchdogRef.current);
+    if (micTimerRef.current) clearInterval(micTimerRef.current);
     try { dcRef.current?.close(); } catch { /* noop */ }
     try { pcRef.current?.close(); } catch { /* noop */ }
     micRef.current?.getTracks().forEach((t) => t.stop());
@@ -458,10 +855,20 @@ export default function RealtimeVoiceSession({
         <div className="ve-head">{statusHead}</div>
         <div className="ve-feed" ref={feedRef}>
           {warn && <div className="vo-warn" style={{ marginBottom: 8 }}>{warn}</div>}
-          {transcript.length === 0 && !error && <div className="ve-empty">Your conversation shows up here. Talk to me, or type below.</div>}
+          {transcript.length === 0 && !streaming && !error && <div className="ve-empty">Your conversation shows up here. Talk to me, or type below.</div>}
           {transcript.map((m, i) => (
             <div key={i} className={`ve-msg ${m.role}`}>{m.content}</div>
           ))}
+          {/* Socrates' words appear HERE as he says them, not in one lump when he
+              finishes. This view used to render only completed turns, so the chat
+              sat empty through an entire spoken reply — the reason the transcript
+              was unreadable in real time. `response.done` moves the finished text
+              into `transcript` and this bubble disappears in the same commit. */}
+          {/* `|| caption` is a safety net: if the smoothing loop is ever starved,
+              show the real text rather than an empty bubble. Readable beats pretty. */}
+          {streaming && (shownCaption || caption) && (
+            <div className="ve-msg assistant live">{shownCaption || caption}</div>
+          )}
           {error && <div className="ve-err">{error}</div>}
         </div>
         <form className="ve-input" onSubmit={sendTyped}>
@@ -482,7 +889,7 @@ export default function RealtimeVoiceSession({
         // newest line, and the top edge fades out. No per-word animation — with a
         // streaming transcript that only made the layout jitter.
         <div className="vo-cap" aria-live="polite" ref={capRef}>
-          <p className="vo-cap-line">{shownCaption}</p>
+          <p className="vo-cap-line">{shownCaption || caption}</p>
         </div>
       ) : (
         <div className="vo-cap vo-cap-soft">

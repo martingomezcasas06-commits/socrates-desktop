@@ -58,7 +58,10 @@ export async function floatWindow(w: number, h: number) {
       const monW = mon.size.width / scale;
       await win.setPosition(new LogicalPosition(Math.max(12, monW - w - 24), 56));
     }
-    try { await tauriInvoke("set_fullscreen_overlay", { enable: true, width: w, height: h }); } catch { /* older build */ }
+    // noActivate: the orb has no text input, so on Windows it takes WS_EX_NOACTIVATE and
+    // stops stealing focus from the app being coached. (macOS ignores it — its NSPanel is
+    // already non-activating.) The typeable coaching panel deliberately does NOT set this.
+    try { await tauriInvoke("set_fullscreen_overlay", { enable: true, width: w, height: h, noActivate: true }); } catch { /* older build */ }
   } catch (e) { console.error("floatWindow", e); }
 }
 
@@ -75,9 +78,14 @@ export async function restoreWindow() {
   } catch (e) { console.error("restoreWindow", e); }
 }
 
-export async function captureScreen(): Promise<string> {
+/**
+ * Base64 JPEG of the screen. Defaults suit the HTTP coaching routes; the realtime
+ * call passes a smaller size because a WebRTC data channel rejects messages over
+ * ~256 KB and a full-size frame silently exceeded it.
+ */
+export async function captureScreen(maxSide?: number, quality?: number): Promise<string> {
   if (!IS_TAURI) return "";
-  try { return await tauriInvoke<string>("capture_screen"); } catch { return ""; }
+  try { return await tauriInvoke<string>("capture_screen", { maxSide, quality }); } catch { return ""; }
 }
 
 type Turn = { role: "user" | "assistant"; content: string };

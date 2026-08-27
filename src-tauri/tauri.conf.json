@@ -29,8 +29,16 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["socrates"]
+        "schemes": [
+          "socrates"
+        ]
       }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/martingomezcasas06-commits/socrates-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNDOEFBMzJDQjQ1RUZCNjUKUldSbCsxNjBMS09LUEVXdWRpS2YyMms1TGgrbFo2SWkrQ0grQm9Xb1ZQbGI3SW5pa0VQVWYrT2YK"
     }
   },
   "bundle": {
@@ -45,6 +53,15 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }

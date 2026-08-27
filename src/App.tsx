@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -9,6 +9,7 @@ import StackPage from "./pages/StackPage";
 import ChatPage from "./pages/ChatPage";
 import CoachingPage from "./pages/CoachingPage";
 import Icon from "./Icon";
+import { checkAndInstall, restartIntoUpdate, type UpdateState } from "./lib/updates";
 
 export type Page = "stack" | "chat" | "coaching";
 
@@ -30,6 +31,11 @@ export default function App() {
   const [coachingTool, setCoachingTool] = useState<string>("");
   const [deepLinkError, setDeepLinkError] = useState<string>("");
   const [deepLinkRaw, setDeepLinkRaw]     = useState<string>("");
+  const [update, setUpdate]               = useState<UpdateState>({ status: "idle" });
+
+  // Check for a new build once per launch. Runs independently of auth so a tester on
+  // Windows picks up fixes without reinstalling the app by hand.
+  useEffect(() => { void checkAndInstall(setUpdate); }, []);
 
   useEffect(() => {
     // Load existing session on mount
@@ -113,6 +119,7 @@ export default function App() {
 
   return (
     <div className="app-body">
+      <UpdateBar state={update} />
       <aside className="rail">
         <div className="rail-brand"><span className="brand-mark" /><span className="nm">Socrates</span></div>
         <div className="rail-section"><span>Workspace</span></div>
@@ -138,6 +145,35 @@ export default function App() {
         {page === "chat" && <ChatPage session={session} />}
         {page === "coaching" && <CoachingPage session={session} initialTool={coachingTool} />}
       </div>
+    </div>
+  );
+}
+
+/** Slim strip shown only while an update is downloading or waiting to be applied.
+ *  Inline styles on purpose: this must survive the app restyle untouched. */
+function UpdateBar({ state }: { state: UpdateState }) {
+  if (state.status === "idle" || state.status === "error") return null;
+  const bar: CSSProperties = {
+    position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+    padding: "7px 14px", fontSize: 13, lineHeight: 1.3,
+    background: "#15637F", color: "#fff",
+  };
+  if (state.status === "downloading") {
+    return <div style={bar}>Downloading update {state.version} — {state.percent}%</div>;
+  }
+  return (
+    <div style={bar}>
+      <span>Update {state.version} is ready.</span>
+      <button
+        onClick={() => { void restartIntoUpdate(); }}
+        style={{
+          background: "#fff", color: "#15637F", border: 0, borderRadius: 4,
+          padding: "3px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+        }}
+      >
+        Restart now
+      </button>
     </div>
   );
 }

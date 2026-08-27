@@ -29,7 +29,7 @@ export default function PlanetOrb({
         <defs>
           <radialGradient id="po-sphere" cx="36%" cy="30%" r="78%">
             <stop offset="0%" stopColor="#8FD4E8" />
-            <stop offset="55%" stopColor="#2E89AE" />
+            <stop offset="55%" stopColor="#15637F" />
             <stop offset="100%" stopColor="#15637F" />
           </radialGradient>
           <radialGradient id="po-glow" cx="50%" cy="50%" r="50%">
@@ -53,7 +53,7 @@ export default function PlanetOrb({
 
         {/* moon — orbits while he's thinking or talking */}
         <g className="po-moon-orbit">
-          <circle cx="50" cy="8" r="4.5" fill="#F2EBDD" />
+          <circle cx="50" cy="8" r="4.5" fill="#8FD4E8" />
         </g>
       </svg>
     </div>

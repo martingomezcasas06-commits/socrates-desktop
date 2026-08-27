@@ -85,8 +85,18 @@ fn coord_ratio(m: &Monitor) -> f32 {
 /// request limit and upload slowly. We cap the longest side at 1366 px and
 /// encode as JPEG (q75): ~150-400 KB instead of multiple MB, with text still
 /// perfectly legible for the vision model.
+/// `max_side` / `quality` are optional and default to the HTTP-route values.
+///
+/// The realtime voice call needs a MUCH smaller frame: it pushes screenshots over
+/// a WebRTC data channel, which refuses any single message over ~256 KB. A
+/// 1366px q75 capture is 150-400 KB, so base64 (+33%) blew straight past the
+/// limit and `send()` threw — silently — meaning the model never once received a
+/// screenshot even with Screen Recording fully granted.
 #[tauri::command]
-fn capture_screen() -> Result<String, String> {
+fn capture_screen(max_side: Option<u32>, quality: Option<u8>) -> Result<String, String> {
+    let max_side = max_side.unwrap_or(MAX_SIDE);
+    let quality = quality.unwrap_or(75);
+
     let monitors = Monitor::all().map_err(|e| format!("monitor error: {e}"))?;
     let monitor = monitors
         .iter()
@@ -100,8 +110,8 @@ fn capture_screen() -> Result<String, String> {
 
     let dynamic = image::DynamicImage::ImageRgba8(rgba);
     let (w, h) = (dynamic.width(), dynamic.height());
-    let resized = if w.max(h) > MAX_SIDE {
-        let scale = MAX_SIDE as f32 / w.max(h) as f32;
+    let resized = if w.max(h) > max_side {
+        let scale = max_side as f32 / w.max(h) as f32;
         dynamic.resize(
             (w as f32 * scale) as u32,
             (h as f32 * scale) as u32,
@@ -114,7 +124,7 @@ fn capture_screen() -> Result<String, String> {
     // JPEG has no alpha channel — convert RGBA → RGB first.
     let rgb = resized.to_rgb8();
     let mut buf = Cursor::new(Vec::new());
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 75);
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
     encoder
         .encode_image(&rgb)
         .map_err(|e| format!("encode error: {e}"))?;
@@ -189,6 +199,32 @@ fn execute_action(
     }
 }
 
+/// Apply / remove `WS_EX_NOACTIVATE` on the main window (Windows only).
+///
+/// macOS's non-activating NSPanel floats over another app WITHOUT activating Socrates,
+/// yet can still take keystrokes. Windows has no single equivalent: a plain always-on-top
+/// window activates the moment it is clicked, which yanks focus out of the very app the
+/// person is being coached in. `WS_EX_NOACTIVATE` fixes that, but it also makes the window
+/// permanently unfocusable — so it is opt-in, used for surfaces with no text input (the
+/// voice orb) and skipped for the typeable coaching companion.
+/// `WS_EX_TOOLWINDOW` additionally keeps the overlay out of the taskbar and Alt-Tab.
+#[cfg(target_os = "windows")]
+fn set_noactivate(win: &WebviewWindow, enable: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    };
+    let Ok(raw) = win.hwnd() else { return };
+    // Cast via isize so this compiles whichever `windows`-crate HWND representation
+    // (pointer or integer) the linked Tauri version happens to use.
+    let hwnd = raw.0 as isize as *mut core::ffi::c_void;
+    let flags = (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW) as isize;
+    unsafe {
+        let cur = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let next = if enable { cur | flags } else { cur & !flags };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+    }
+}
+
 /// Configure the (panel-ified) main window to float **over another app's native-fullscreen
 /// Space** as a non-activating overlay — or restore it to a normal window.
 ///
@@ -197,7 +233,13 @@ fn execute_action(
 /// The window is converted to a non-activating NSPanel (see `to_panel` in setup); here we set
 /// the level, collection behaviour and style mask so it appears in place without stealing focus.
 #[cfg(target_os = "macos")]
-fn overlay_panel(app: &AppHandle, enable: bool, width: Option<f64>, height: Option<f64>) {
+fn overlay_panel(
+    app: &AppHandle,
+    enable: bool,
+    width: Option<f64>,
+    height: Option<f64>,
+    _no_activate: bool,
+) {
     use tauri_nspanel::cocoa::appkit::NSWindowCollectionBehavior as CB;
     use tauri_nspanel::ManagerExt;
     let Ok(panel) = app.get_webview_panel("main") else { return };
@@ -232,20 +274,50 @@ fn overlay_panel(app: &AppHandle, enable: bool, width: Option<f64>, height: Opti
 }
 
 #[cfg(not(target_os = "macos"))]
-fn overlay_panel(app: &AppHandle, enable: bool, _width: Option<f64>, _height: Option<f64>) {
-    // Windows/Linux have no macOS-style fullscreen Spaces, so a plain always-on-top window
-    // already floats over borderless-fullscreen apps (browsers, web tools). Set it directly.
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_always_on_top(enable);
-        let _ = win.set_visible_on_all_workspaces(enable);
+fn overlay_panel(
+    app: &AppHandle,
+    enable: bool,
+    width: Option<f64>,
+    height: Option<f64>,
+    no_activate: bool,
+) {
+    // No fullscreen Spaces here, so always-on-top is enough to float over borderless-
+    // fullscreen apps. Two things this used to miss: the caller's size was ignored (so the
+    // tiny voice orb stayed a full-size window), and clicking the overlay stole focus from
+    // the app being taught.
+    let Some(win) = app.get_webview_window("main") else { return };
+    let _ = win.set_always_on_top(enable);
+    let _ = win.set_visible_on_all_workspaces(enable);
+
+    #[cfg(target_os = "windows")]
+    set_noactivate(&win, enable && no_activate);
+    #[cfg(not(target_os = "windows"))]
+    let _ = no_activate;
+
+    if enable {
+        let _ = win.set_size(LogicalSize::new(
+            width.unwrap_or(440.0),
+            height.unwrap_or(680.0),
+        ));
+        position_companion(&win, None);
+    } else {
+        let _ = win.set_size(LogicalSize::new(980.0, 700.0));
+        let _ = win.center();
     }
 }
 
 /// Frontend hook (enterFloating/exitFloating, voice orb) to toggle the overlay.
 /// Optional width/height set the floating size (the voice orb is much smaller).
 #[tauri::command]
-fn set_fullscreen_overlay(app: AppHandle, enable: bool, width: Option<f64>, height: Option<f64>) {
-    overlay_panel(&app, enable, width, height);
+fn set_fullscreen_overlay(
+    app: AppHandle,
+    enable: bool,
+    width: Option<f64>,
+    height: Option<f64>,
+    no_activate: Option<bool>,
+) {
+    // Defaults to false so an overlay stays clickable/typeable unless the caller opts out.
+    overlay_panel(&app, enable, width, height, no_activate.unwrap_or(false));
 }
 
 /// Perform the realtime WebRTC offer/answer exchange natively.
@@ -273,22 +345,61 @@ async fn realtime_sdp(secret: String, model: String, offer: String) -> Result<St
     Ok(body)
 }
 
-/// Append a line to ~/Library/Logs/socrates-voice.log.
+/// Where the voice log and the capture probe are written.
+///
+/// This used to be hardcoded to `$HOME/Library/Logs`. Windows does not set `HOME`
+/// (it uses `USERPROFILE`), so the lookup returned `None` and every voice-session log
+/// line was silently dropped — the exact diagnostics needed to debug voice on Windows.
+/// macOS keeps its historic path; everything else uses Tauri's per-app log dir
+/// (`%APPDATA%\app.socrates.desktop\logs` on Windows).
+fn log_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        let home = std::env::var_os("HOME")?;
+        let mut p = std::path::PathBuf::from(home);
+        p.push("Library/Logs");
+        let _ = std::fs::create_dir_all(&p);
+        Some(p)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let p = app.path().app_log_dir().ok()?;
+        let _ = std::fs::create_dir_all(&p);
+        Some(p)
+    }
+}
+
+/// Append a line to the voice log.
 ///
 /// A release Tauri build has no devtools, so a webview `console.log` goes
 /// nowhere — which is exactly why voice-call bugs kept being diagnosed by
 /// guesswork. This gives the voice session somewhere real to write.
 #[tauri::command]
-fn debug_log(line: String) {
+fn debug_log(app: AppHandle, line: String) {
     use std::io::Write;
-    let Some(home) = std::env::var_os("HOME") else { return };
-    let mut path = std::path::PathBuf::from(home);
-    path.push("Library/Logs");
-    let _ = std::fs::create_dir_all(&path);
+    let Some(mut path) = log_dir(&app) else { return };
     path.push("socrates-voice.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(f, "{line}");
     }
+}
+
+/// Write the current capture to ~/Library/Logs/socrates-probe.jpg so a human can
+/// LOOK at what the app actually sees. "Can he see my screen?" was argued about
+/// for days on inference alone; a denied capture on macOS returns the desktop
+/// wallpaper with no error, which is indistinguishable from success unless you
+/// open the file.
+#[tauri::command]
+fn save_capture_probe(app: AppHandle) -> Result<String, String> {
+    let b64 = capture_screen(Some(1000), Some(60))?;
+    let bytes = general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("decode error: {e}"))?;
+    let mut path = log_dir(&app).ok_or_else(|| "no log directory".to_string())?;
+    path.push("socrates-probe.jpg");
+    std::fs::write(&path, bytes).map_err(|e| format!("write error: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Park the companion window top-right, just under the menu bar, near the tray icon.
@@ -303,7 +414,10 @@ fn position_companion(win: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>
             height: (680.0 * scale) as u32,
         });
         let margin = (12.0 * scale) as i32;
-        let menubar = (30.0 * scale) as i32;
+        // Only macOS reserves the top strip for a menu bar; on Windows/Linux that 30px
+        // offset just pushed the panel down for no reason.
+        let top_inset = if cfg!(target_os = "macos") { 30.0 } else { 10.0 };
+        let menubar = (top_inset * scale) as i32;
         let max_x = mpos.x + msize.width as i32 - wsize.width as i32 - margin;
         let min_x = mpos.x + margin;
         let mut x = match anchor {
@@ -338,7 +452,7 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
     // Show as a compact floating companion, top-right, over everything (incl. fullscreen).
     let _ = win.set_size(LogicalSize::new(440.0, 680.0));
     position_companion(&win, anchor);
-    overlay_panel(app, true, None, None);
+    overlay_panel(app, true, None, None, false);
 }
 
 /// Bring the full app window back to the front — used when the dock icon is clicked
@@ -346,7 +460,7 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
 /// level/style so it behaves like an ordinary window again, then shows + focuses it.
 fn show_main(app: &AppHandle) {
     let Some(win) = app.get_webview_window("main") else { return };
-    overlay_panel(app, false, None, None); // restore normal chrome/level + 980x700
+    overlay_panel(app, false, None, None, false); // restore normal chrome/level + 980x700
     let _ = win.set_size(LogicalSize::new(980.0, 700.0));
     let _ = win.center();
     let _ = win.show();
@@ -365,7 +479,9 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_deep_link::init());
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
 
     // The non-activating-panel overlay is macOS-only (tauri-nspanel); skip on Windows/Linux.
     #[cfg(target_os = "macos")]
@@ -379,7 +495,8 @@ pub fn run() {
             screen_recording_allowed,
             debug_log,
             realtime_sdp,
-            request_screen_recording
+            request_screen_recording,
+            save_capture_probe
         ])
         .on_window_event(|window, event| {
             // Red close button: don't DESTROY the window (that left the app running
@@ -420,18 +537,35 @@ pub fn run() {
             }
 
             // Menu-bar (tray) companion — always reachable, even over fullscreen apps.
-            let toggle = MenuItem::with_id(app, "toggle", "Show / Hide Socrates", true, None::<&str>)?;
+            // "Open" is not a duplicate of "toggle": toggle shows the small floating
+            // companion, whereas Open restores the full 980x700 window. Without it, a
+            // Windows user who closes the window has no way back except the tray icon —
+            // which Windows 11 hides in the overflow flyout by default.
+            let open = MenuItem::with_id(app, "open", "Open Socrates", true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", "Show / Hide companion", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Socrates", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &quit])?;
-            let icon = Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?;
+            let menu = Menu::with_items(app, &[&open, &toggle, &quit])?;
 
-            TrayIconBuilder::with_id("socrates-tray")
+            // macOS menu-bar icons are monochrome templates the OS inverts for light/dark.
+            // Windows taskbars are dark by default, so that same black glyph is invisible —
+            // use the full-colour app icon there.
+            #[cfg(target_os = "macos")]
+            let icon = Image::from_bytes(include_bytes!("../icons/tray@2x.png"))?;
+            #[cfg(not(target_os = "macos"))]
+            let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+
+            let tray = TrayIconBuilder::with_id("socrates-tray")
                 .icon(icon)
-                .icon_as_template(true)
                 .tooltip("Socrates — click to open your coach")
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false);
+
+            #[cfg(target_os = "macos")]
+            let tray = tray.icon_as_template(true);
+
+            tray
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => show_main(app),
                     "toggle" => toggle_companion(app, None),
                     "quit" => app.exit(0),
                     _ => {}
