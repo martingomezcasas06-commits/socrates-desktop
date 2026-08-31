@@ -62,7 +62,7 @@ function StrengthBar({ password }: { password: string }) {
     <div style={{ width: "100%" }}>
       <div style={{ display: "flex", gap: 4, marginBottom: 5 }}>
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i < score ? colors[score] : "var(--surface-3)", transition: "background 200ms" }} />
+          <div key={i} style={{ flex: 1, height: 3, borderRadius: "var(--r-xs)", background: i < score ? colors[score] : "var(--surface-3)", transition: "background 200ms" }} />
         ))}
       </div>
       <div style={{ fontSize: 11, color: colors[score], textAlign: "right" }}>{labels[score]}</div>

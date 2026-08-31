@@ -310,7 +310,7 @@ const errorStyle: React.CSSProperties = {
   fontSize: 13,
   color: "var(--red)",
   background: "var(--red-soft)",
-  borderRadius: 8,
+  borderRadius: "var(--r-sm)",
   padding: "8px 11px",
   marginBottom: 11,
   lineHeight: 1.4,
