@@ -10,8 +10,10 @@ name: release
 #   2. commit, then:  git tag v0.1.1 && git push --tags
 #
 # Required repository secrets:
-#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/socrates-updater.key
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  empty string (the key was generated without one)
+#   TAURI_SIGNING_PRIVATE_KEY  contents of ~/.tauri/socrates-updater.key
+#
+# That is the only secret required. The key carries no passphrase, and GitHub
+# will not store an empty secret, so the password is set to "" in the job below.
 
 on:
   push:
@@ -68,7 +70,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The signing key has no passphrase, and GitHub refuses to store an
+          # empty secret — so this is set literally rather than read from one.
+          # If the key is ever regenerated WITH a passphrase, put it in a secret
+          # named TAURI_SIGNING_PRIVATE_KEY_PASSWORD and read it here instead.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
           releaseName: "Socrates __VERSION__"
