@@ -81,7 +81,7 @@
     -webkit-font-smoothing: antialiased;
     background: var(--bg);
   }
-  ::selection { background: var(--accent); color: #fff; }
+  ::selection { background: var(--accent); color: var(--on-accent); }
   .mono { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
   .ital { font-family: var(--font-italic); font-style: italic; font-weight: 400; }
   .dim { color: var(--ink-dim); }
@@ -229,7 +229,7 @@
   /* buttons */
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-radius: var(--r-sm); font-size: 13.5px; font-weight: 600; border: 1px solid transparent; transition: background .16s, color .16s, border-color .16s, transform .16s; white-space: nowrap; }
   .btn svg { width: 16px; height: 16px; stroke-width: 1.8; }
-  .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 4px 16px -4px var(--accent-glow); }
+  .btn-primary { background: var(--accent); color: var(--on-accent); }
   .btn-primary:hover { background: var(--accent-2); transform: translateY(-1px); }
   .btn-ghost { background: transparent; color: var(--ink); border-color: var(--rule-strong); }
   .btn-ghost:hover { background: var(--surface-hover); }
@@ -276,19 +276,19 @@
   .msg { display: flex; gap: 11px; max-width: 80%; }
   .msg .av { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-size: 11px; font-weight: 600; }
   .msg .bubble { padding: 12px 15px; border-radius: 14px; font-size: 13.5px; line-height: 1.55; }
-  .msg.bot .av { background: var(--accent); color: #fff; }
+  .msg.bot .av { background: var(--accent); color: var(--on-accent); }
   .msg.bot .av svg { width: 15px; height: 15px; }
   .msg.bot .bubble { background: var(--surface); border: 1px solid var(--rule); border-top-left-radius: 4px; }
   .msg.me { align-self: flex-end; flex-direction: row-reverse; }
   .msg.me .av { background: var(--accent-soft); color: var(--accent-2); }
-  .msg.me .bubble { background: var(--accent); color: #fff; border-top-right-radius: 4px; }
+  .msg.me .bubble { background: var(--accent); color: var(--on-accent); border-top-right-radius: 4px; }
   .chat-foot { padding: 0 28px 20px; }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   .chip { padding: 8px 13px; border-radius: var(--r-sm); border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-dim); font-size: 12.5px; transition: background .16s, color .16s, border-color .16s; }
   .chip:hover { background: var(--surface-hover); color: var(--ink); border-color: var(--accent); }
   .composer { display: flex; align-items: flex-end; gap: 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); padding: 9px 9px 9px 16px; background: var(--surface); }
   .composer textarea { flex: 1; border: none; background: transparent; resize: none; color: var(--ink); font-family: inherit; font-size: 13.5px; line-height: 1.5; max-height: 100px; padding: 5px 0; }
-  .send { width: 36px; height: 36px; border-radius: 9px; border: none; background: var(--accent); color: #fff; display: grid; place-items: center; flex-shrink: 0; transition: background .16s, transform .16s; }
+  .send { width: 36px; height: 36px; border-radius: 9px; border: none; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; flex-shrink: 0; transition: background .16s, transform .16s; }
   .send:hover { background: var(--accent-2); transform: scale(1.05); }
   .send svg { width: 17px; height: 17px; }
   /* chat right context strip */
@@ -426,7 +426,7 @@
   .guide-step { display: flex; gap: 11px; }
   .guide-step .gs-n { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
   .guide-step.done .gs-n { background: var(--green-soft); color: var(--green); }
-  .guide-step.active .gs-n { background: var(--accent); color: #fff; box-shadow: 0 0 0 4px var(--accent-soft); }
+  .guide-step.active .gs-n { background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 4px var(--accent-soft); }
   .guide-step.todo .gs-n { background: var(--surface-3); color: var(--ink-faint); }
   .guide-step .gs-tx { font-size: 13px; line-height: 1.5; padding-top: 1px; }
   .guide-step.todo .gs-tx { color: var(--ink-faint); }
@@ -436,7 +436,7 @@
   .qa-input { display: flex; align-items: center; gap: 8px; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 8px 10px; background: var(--surface-2); }
   .qa-input input { flex: 1; background: transparent; border: none; color: var(--ink); font-family: inherit; font-size: 12.5px; }
   .qa-input input::placeholder { color: var(--ink-faint); }
-  .qa-input .send-sm { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: #fff; border: none; display: grid; place-items: center; flex-shrink: 0; }
+  .qa-input .send-sm { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: var(--on-accent); border: none; display: grid; place-items: center; flex-shrink: 0; }
   .qa-input .send-sm svg { width: 13px; height: 13px; }
 
   /* lesson phase badge (orientation → core → pro) */
@@ -653,7 +653,7 @@
     max-width: 88%; overflow-wrap: anywhere; animation: ve-in .22s ease-out both;
   }
   .ve-msg.assistant { background: rgba(242,235,221,.06); border: 1px solid var(--rule); border-bottom-left-radius: 5px; align-self: flex-start; color: var(--ink); }
-  .ve-msg.user { background: var(--accent); color: #fff; border-bottom-right-radius: 5px; align-self: flex-end; }
+  .ve-msg.user { background: var(--accent); color: var(--on-accent); border-bottom-right-radius: 5px; align-self: flex-end; }
   @keyframes ve-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   /* The line Socrates is still saying: a caret so it reads as being written,
      not as a message that has already finished arriving. */
@@ -668,7 +668,7 @@
   .ve-input { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--rule); flex-shrink: 0; }
   .ve-input input { flex: 1; min-width: 0; height: 34px; border-radius: 9px; border: 1px solid var(--rule-strong); background: var(--surface-2); color: var(--ink); font-family: inherit; font-size: 13px; padding: 0 12px; }
   .ve-input input::placeholder { color: var(--ink-faint); }
-  .ve-input .send-sm { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: #fff; border: none; display: grid; place-items: center; flex-shrink: 0; }
+  .ve-input .send-sm { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: var(--on-accent); border: none; display: grid; place-items: center; flex-shrink: 0; }
   .ve-input .send-sm:disabled { opacity: .4; }
   .ve-input .send-sm svg { width: 15px; height: 15px; }
 
@@ -685,7 +685,7 @@
   .comp-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; max-height: 420px; overflow-y: auto; }
   .comp-step { display: flex; gap: 10px; } .comp-step .cs-n { width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-size: 10px; font-weight: 700; }
   .comp-step.done .cs-n { background: var(--green-soft); color: var(--green); }
-  .comp-step.active .cs-n { background: var(--accent); color: #fff; }
+  .comp-step.active .cs-n { background: var(--accent); color: var(--on-accent); }
   .comp-step.todo .cs-n { background: var(--surface-3); color: var(--ink-faint); }
   .comp-step .cs-x { font-size: 12.5px; line-height: 1.45; } .comp-step.todo .cs-x { color: var(--ink-faint); } .comp-step.active .cs-x b { color: var(--accent-2); }
   .comp-qa { border-top: 1px solid var(--rule); padding-top: 12px; }
@@ -695,7 +695,7 @@
   #demoBar .db-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); padding: 0 8px 0 10px; }
   #demoBar button { border: none; background: transparent; color: var(--ink-dim); font-size: 12px; font-weight: 600; padding: 7px 13px; border-radius: var(--r-sm); transition: background .16s, color .16s; white-space: nowrap; }
   #demoBar button:hover { color: var(--ink); }
-  #demoBar button.active { background: var(--accent); color: #fff; }
+  #demoBar button.active { background: var(--accent); color: var(--on-accent); }
   #demoBar .db-sep { width: 1px; height: 18px; background: var(--rule); margin: 0 3px; }
   #demoBar .db-sub { display: flex; align-items: center; gap: 4px; }
   #demoBar .db-sub button { font-size: 11.5px; padding: 6px 10px; }
