@@ -436,7 +436,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
               )}
               <div className="preview-frame">
                 {!IS_TAURI && streamRef.current ? (
-                  <video autoPlay muted playsInline ref={(el) => { if (el && streamRef.current && el.srcObject !== streamRef.current) el.srcObject = streamRef.current; }} style={{ width: "100%", height: "100%", objectFit: "contain", background: "#0d1017" }} />
+                  <video autoPlay muted playsInline ref={(el) => { if (el && streamRef.current && el.srcObject !== streamRef.current) el.srcObject = streamRef.current; }} style={{ width: "100%", height: "100%", objectFit: "contain", background: "var(--bg)" }} />
                 ) : (
                   <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--ink-faint)", textAlign: "center", padding: 24 }}>
                     <div>
