@@ -33,8 +33,8 @@ export default function PlanetOrb({
             <stop offset="100%" stopColor="#15637F" />
           </radialGradient>
           <radialGradient id="po-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="55%" stopColor="#4FB4D8" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#4FB4D8" stopOpacity="0" />
+            <stop offset="55%" stopColor="#8FD4E8" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#8FD4E8" stopOpacity="0" />
           </radialGradient>
         </defs>
 
@@ -43,12 +43,12 @@ export default function PlanetOrb({
 
         {/* ring: back half, then planet, then the front arc so it reads 3D */}
         <g className="po-ring" transform="rotate(-20 50 50)">
-          <ellipse cx="50" cy="50" rx="42" ry="13" fill="none" stroke="#B7E5F2" strokeWidth="5" strokeOpacity="0.45" />
+          <ellipse cx="50" cy="50" rx="42" ry="13" fill="none" stroke="#8FD4E8" strokeWidth="5" strokeOpacity="0.45" />
         </g>
         <circle className="po-sphere" cx="50" cy="50" r="26" fill="url(#po-sphere)" />
         <ellipse className="po-shine" cx="41" cy="41" rx="9" ry="6" fill="#fff" opacity="0.2" />
         <g className="po-ring" transform="rotate(-20 50 50)">
-          <path d="M8 51 A 42 13 0 0 0 92 51" fill="none" stroke="#B7E5F2" strokeWidth="5" />
+          <path d="M8 51 A 42 13 0 0 0 92 51" fill="none" stroke="#8FD4E8" strokeWidth="5" />
         </g>
 
         {/* moon — orbits while he's thinking or talking */}
