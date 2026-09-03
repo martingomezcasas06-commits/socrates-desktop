@@ -494,21 +494,62 @@
   /* A small hovering pill: a status row on top, a clean 2-line subtitle below.
      overflow:hidden + line-clamp guarantee the caption never bleeds past the
      window edge (the "cut at the bottom" bug). */
-  .voice-orb {
-    height: 100%; display: flex; flex-direction: column; gap: 6px;
-    padding: 10px 14px 13px; overflow: hidden;
-    /* Glassy floating panel: a light rim at the top edge reads as a raised surface
-       against whatever app it's hovering over. */
-    background:
-      radial-gradient(130% 100% at 50% -20%, rgba(143, 212, 232,0.20), transparent 68%),
-      rgba(6, 10, 18, 0.86);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
-    backdrop-filter: blur(22px) saturate(140%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255,.10);
-    -webkit-app-region: drag; /* drag the orb anywhere */
+    .voice-orb {
+    height: 100%; display: flex; flex-direction: column; gap: 0;
+    padding: 7px 8px 9px 10px; overflow: hidden;
+    background: var(--night, #060A12);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: var(--r-sm);
+    -webkit-app-region: drag;
   }
   .voice-orb button { -webkit-app-region: no-drag; }
   .vo-top { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+
+  /* ── CoachingPanel, per the design system ───────────────────────────────
+     A 22px mark, a display title over a mono meta line, a VU meter while
+     audio is live, then one caption line. 288px wide, pinned 16px from the
+     top-right corner over the person's own work. */
+  .vo-mark { width: 22px; height: 22px; flex-shrink: 0; display: block; }
+  .vo-mark.live { animation: vo-breathe 3.6s ease-in-out infinite; }
+  @keyframes vo-breathe { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1); } }
+
+  .vo-title {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 12.5px; line-height: 1.15; letter-spacing: -0.03em;
+    color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .vo-meta {
+    display: block; margin-top: 2px;
+    font-family: var(--font-mono);
+    font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .vo-meta.ok   { color: var(--accent); }
+  .vo-meta.warn { color: var(--amber); }
+  .vo-meta.bad  { color: var(--red); }
+
+  /* Six bars, staggered — the signature that a call is actually live. */
+  .vo-vu { display: flex; align-items: center; gap: 2px; height: 14px; flex-shrink: 0; }
+  .vo-vu i {
+    display: block; width: 2px; height: 100%; border-radius: var(--r-xs);
+    background: var(--accent-2); transform-origin: center;
+    animation: vo-vu 1.05s ease-in-out infinite;
+  }
+  .vo-vu i:nth-child(1) { opacity: .50; }
+  .vo-vu i:nth-child(2) { opacity: .75; animation-delay: .13s; }
+  .vo-vu i:nth-child(3) { opacity: .93; animation-delay: .26s; }
+  .vo-vu i:nth-child(4) { opacity: 1;   animation-delay: .39s; }
+  .vo-vu i:nth-child(5) { opacity: .87; }
+  .vo-vu i:nth-child(6) { opacity: .62; animation-delay: .13s; }
+  @keyframes vo-vu { 0%, 100% { transform: scaleY(.18); } 50% { transform: scaleY(1); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vo-mark.live, .vo-vu i { animation: none; }
+    .vo-vu i { transform: scaleY(.5); }
+  }
+
 
   /* ── PlanetOrb: the live Saturn on a voice call ──
      --amp is written by the audio loop (0..1) straight to the element, so the
@@ -574,11 +615,7 @@
      hard-clipped mid-word ("SOCRATES I") and the level badge was pushed clean out
      of the panel. Truncation has to happen on an inline child, so the label text
      lives in .vo-status-text and the badges sit beside it, always visible. */
-  .vo-status {
-    flex: 1; min-width: 0; font-size: 10px; font-weight: 500; letter-spacing: .07em;
-    text-transform: uppercase; color: var(--ink-faint);
-    display: flex; align-items: center; gap: 6px;
-  }
+  .vo-status { min-width: 0; flex: 1; overflow: hidden; }
   .vo-status-text {
     min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
@@ -614,19 +651,10 @@
      spoken was lost among the ones already said. Now it is capped at two lines and
      kept scrolled to the bottom, so what you see is what he is saying right now.
      `max-height` rather than `height` so a short caption doesn't leave a gap. */
-  .vo-cap {
-    --cap-fs: 13.5px; --cap-lh: 1.45;
-    flex: 0 1 auto; min-height: 0;
-    max-height: calc(var(--cap-fs) * var(--cap-lh) * 2);
-    overflow: hidden;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 9px, #000 100%);
-    mask-image: linear-gradient(to bottom, transparent 0, #000 9px, #000 100%);
-  }
+  .vo-cap { padding: 6px 2px 0 0; min-width: 0; }
   .vo-cap-line {
-    font-size: var(--cap-fs); line-height: var(--cap-lh); color: var(--ink);
-    letter-spacing: -0.006em;
-    /* NOT `text-wrap: pretty` — it rebalances the last lines as text streams in,
-       which makes the words jump sideways mid-sentence. */
+    font-size: 12.5px; line-height: 1.45; color: var(--ink-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .vo-cap-soft { display: flex; align-items: center; }
   .vo-cap-soft .vo-cap-line { color: var(--ink-faint); font-size: 12.5px; }

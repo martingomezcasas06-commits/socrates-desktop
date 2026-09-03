@@ -31,7 +31,10 @@ const SILENCE_MS_SHORT = 420;   // utterances under ~3.5s
 const SILENCE_MS_LONG = 850;    // utterances past LONG_SPEECH_MS
 const LONG_SPEECH_MS = 3500;
 const MIN_UTTERANCE_MS = 350; // ignore blips shorter than this
-export const ORB_W = 264, ORB_H = 138; // small hovering pill (room for live subtitles)
+// The design system's coaching panel: --panel-w 288, header + a single caption
+// line. It was 264x138 when the caption was a scrolling block; the line now
+// ellipsises, so the panel is shorter. Extra height covers the warning row.
+export const ORB_W = 288, ORB_H = 112;
 export const EXP_W = 384, EXP_H = 540; // expanded chat view
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

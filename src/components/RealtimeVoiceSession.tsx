@@ -34,13 +34,6 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
 type Turn = { role: "user" | "assistant"; content: string; itemId?: string };
 type Status = "connecting" | "speaking" | "listening" | "thinking";
 
-const STATUS_LABEL: Record<Status, string> = {
-  connecting: "Connecting",
-  speaking: "Speaking",
-  listening: "Listening",
-  thinking: "Thinking",
-};
-
 const IDLE_SHOT_MS = 10000; // periodic screen refresh while nobody is talking
 const PERM_RECHECK_MS = 3000; // poll for Screen Recording being switched on mid-call
 
@@ -76,6 +69,10 @@ export default function RealtimeVoiceSession({
   const [youSaid, setYouSaid] = useState("");
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");
+  // The panel's meta line shows elapsed time and whether Socrates can actually
+  // see the screen. screenOk mirrors screenOkRef because a ref cannot re-render.
+  const [elapsed, setElapsed] = useState(0);
+  const [screenOk, setScreenOk] = useState(false);
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -124,6 +121,11 @@ export default function RealtimeVoiceSession({
   const pendingTimerRef = useRef<number | null>(null);
   const errTimerRef = useRef<number | null>(null);
   const screenOkRef = useRef(false);
+
+  useEffect(() => {
+    const t = setInterval(() => setElapsed((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const setStatusBoth = (s: Status) => { statusRef.current = s; setStatus(s); };
   const pushTurn = useCallback((t: Turn) => {
@@ -696,6 +698,7 @@ export default function RealtimeVoiceSession({
           catch { ok = true; /* older build without the command: behave as before */ }
           if (ok === screenOkRef.current && !first) return;
           screenOkRef.current = ok;
+          setScreenOk(ok);
           vlog('REALTIME: screen recording permission = ' + ok);
           if (ok) {
             setWarn("");
@@ -730,6 +733,7 @@ export default function RealtimeVoiceSession({
                 vlog('REALTIME: permission re-check after prompt = ' + after);
                 if (after) {
                   screenOkRef.current = true;
+                  setScreenOk(true);
                   vlog('REALTIME: screen recording granted after prompt');
                   setWarn(""); announceScreen(true); void grab();
                   return;
@@ -832,13 +836,42 @@ export default function RealtimeVoiceSession({
     onEnd();
   }
 
+  /* The panel follows the design system's CoachingPanel: a 22px mark, a display
+     title over a mono meta line, a VU meter while audio is live, and the
+     controls. Tone colours the meta line — teal normally, amber when something
+     needs attention, red when the call has failed. */
+  const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  const TITLE: Record<Status, string> = {
+    connecting: "Connecting",
+    speaking: "Socrates is talking",
+    listening: "Listening",
+    thinking: "Thinking",
+  };
+  const levelWord = level === "new" ? "intro" : level === "learning" ? "core" : level ? "pro" : null;
+  const meta =
+    status === "connecting" ? "starting up"
+    : [
+        mmss,
+        status === "listening" ? "your turn" : screenOk ? "sharing screen" : "audio only",
+        levelWord,
+      ].filter(Boolean).join(" · ");
+  const tone = error ? "bad" : warn ? "warn" : "ok";
+  const live = status === "speaking" || status === "listening";
+
   const statusHead = (
     <>
-      <PlanetOrb status={status} size={40} innerRef={planetRef} />
-      <span className="vo-status">
-        <span className="vo-status-text">{STATUS_LABEL[status]}</span>
-        {level && <span className="vo-lvl">{level === "new" ? "intro" : level === "learning" ? "core" : "pro"}</span>}
+      <span className={`vo-mark${live ? " live" : ""}`} aria-hidden="true">
+        <PlanetOrb status={status} size={22} innerRef={planetRef} />
       </span>
+      <span className="vo-status">
+        <b className="vo-title">{TITLE[status]}</b>
+        <span className={`vo-meta ${tone}`}>{meta}</span>
+      </span>
+      {live && (
+        <span className="vo-vu" aria-hidden="true">
+          <i /><i /><i /><i /><i /><i />
+        </span>
+      )}
       <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
         <Icon name={muted ? "eye" : "coach"} />
       </button>
