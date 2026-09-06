@@ -74,7 +74,6 @@ export default function RealtimeVoiceSession({
   const [elapsed, setElapsed] = useState(0);
   const [screenOk, setScreenOk] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [level, setLevel] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   // True between response.created and response.done — i.e. while Socrates is
   // actually speaking. Drives the live, still-being-written bubble in the chat.
@@ -87,7 +86,6 @@ export default function RealtimeVoiceSession({
   const dcRef = useRef<RTCDataChannel | null>(null);
   const micRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const planetRef = useRef<HTMLDivElement | null>(null);   // orb element — amplitude is written here
   const capRef = useRef<HTMLDivElement | null>(null);      // caption viewport, kept scrolled to the newest line
   const vizCtxRef = useRef<AudioContext | null>(null);
   const vizRafRef = useRef<number | null>(null);
@@ -253,7 +251,6 @@ export default function RealtimeVoiceSession({
         secret = data.client_secret;
         modelName = data.model ?? modelName;
         vlog('REALTIME: mint ok, model=' + data.model);
-        if (data.level) setLevel(data.level);
       } catch (e) {
         vlog('REALTIME: mint FAILED → falling back to classic. ' + String(e));
         if (!cancelled) onFallback('key: ' + String(e));
@@ -380,9 +377,10 @@ export default function RealtimeVoiceSession({
           el.autoplay = true;
           audioElRef.current = el;
 
-          // Tap the voice to drive the planet. We write amplitude to a CSS
-          // variable on the orb element rather than React state — this runs every
-          // frame and would otherwise re-render the panel 60x a second.
+          // Tap the voice so we know the moment Socrates actually becomes
+          // audible — that is what releases the caption below. Kept off React
+          // state deliberately: this runs every frame and would otherwise
+          // re-render the panel 60x a second.
           try {
             const ctx = new AudioContext();
             vizCtxRef.current = ctx;
@@ -398,17 +396,17 @@ export default function RealtimeVoiceSession({
               let sum = 0;
               for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
               const rms = Math.sqrt(sum / buf.length);
-              // normalize speech-ish range and ease it so the planet glides
+              // normalize speech-ish range, then ease so one loud frame can't
+              // trip the gate on its own
               const target = Math.min(1, rms * 7);
               smoothed += (target - smoothed) * (target > smoothed ? 0.5 : 0.12);
-              planetRef.current?.style.setProperty("--amp", smoothed.toFixed(3));
               // First real sound of this reply: release the caption. Until now it
               // has been held at zero so it can't run ahead of the voice.
               if (!audibleRef.current && smoothed > 0.04) audibleRef.current = true;
               vizRafRef.current = requestAnimationFrame(tick);
             };
             vizRafRef.current = requestAnimationFrame(tick);
-          } catch { /* visual flourish only — baseline CSS animation still runs */ }
+          } catch { /* the caption falls back to releasing immediately */ }
         };
 
         const dc = pc.createDataChannel("oai-events");
@@ -847,21 +845,19 @@ export default function RealtimeVoiceSession({
     listening: "Listening",
     thinking: "Thinking",
   };
-  const levelWord = level === "new" ? "intro" : level === "learning" ? "core" : level ? "pro" : null;
+  // Two facts, the way the design writes them: how long we have been going,
+  // and what Socrates can currently see. Nothing else fits on one mono line.
   const meta =
     status === "connecting" ? "starting up"
-    : [
-        mmss,
-        status === "listening" ? "your turn" : screenOk ? "sharing screen" : "audio only",
-        levelWord,
-      ].filter(Boolean).join(" · ");
+    : [mmss, status === "listening" ? "your turn" : screenOk ? "sharing screen" : "audio only"]
+        .join(" · ");
   const tone = error ? "bad" : warn ? "warn" : "ok";
   const live = status === "speaking" || status === "listening";
 
   const statusHead = (
     <>
       <span className={`vo-mark${live ? " live" : ""}`} aria-hidden="true">
-        <PlanetOrb status={status} size={22} innerRef={planetRef} />
+        <PlanetOrb status={status} size={22} />
       </span>
       <span className="vo-status">
         <b className="vo-title">{TITLE[status]}</b>

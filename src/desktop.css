@@ -551,56 +551,16 @@
   }
 
 
-  /* ── PlanetOrb: the live Saturn on a voice call ──
-     --amp is written by the audio loop (0..1) straight to the element, so the
-     planet moves with the real voice. Baseline animations keep it alive even if
-     the analyser reports silence. */
-  .planet { --amp: 0; flex-shrink: 0; position: relative; line-height: 0; }
-  .planet svg { display: block; overflow: visible; }
-  .planet .po-sphere {
-    transform-origin: 50px 50px;
-    transform: scale(calc(1 + var(--amp) * 0.17));
-    transition: transform .07s linear;
-  }
-  .planet .po-glow { opacity: calc(0.12 + var(--amp) * 0.75); transition: opacity .1s linear; }
-  .planet .po-ring { transform-origin: 50px 50px; }
-  .planet .po-moon-orbit { transform-origin: 50px 50px; opacity: 0; }
-
-  /* connecting — dim, slow drift */
-  .planet.connecting { opacity: .55; }
-  .planet.connecting .po-sphere { animation: po-breathe 2.6s ease-in-out infinite; }
-
-  /* listening — calm breathing, faint moon */
-  .planet.listening .po-sphere { animation: po-breathe 3.4s ease-in-out infinite; }
-  .planet.listening .po-moon-orbit { opacity: .35; animation: po-orbit 9s linear infinite; }
-
-  /* thinking — the moon races round */
-  .planet.thinking .po-moon-orbit { opacity: .9; animation: po-orbit 1.5s linear infinite; }
-  .planet.thinking .po-ring { animation: po-tilt 1.5s ease-in-out infinite; }
-
-  /* speaking — pulses with his voice, ring wobbles, moon orbits */
-  .planet.speaking .po-sphere { animation: po-pulse 1.1s ease-in-out infinite; }
-  .planet.speaking .po-ring { animation: po-tilt 2.4s ease-in-out infinite; }
-  .planet.speaking .po-moon-orbit { opacity: 1; animation: po-orbit 3.6s linear infinite; }
-
-  @keyframes po-breathe {
-    0%, 100% { transform: scale(calc(1 + var(--amp) * 0.17)); }
-    50%      { transform: scale(calc(1.045 + var(--amp) * 0.17)); }
-  }
-  @keyframes po-pulse {
-    0%, 100% { transform: scale(calc(1.01 + var(--amp) * 0.17)); }
-    50%      { transform: scale(calc(1.09 + var(--amp) * 0.17)); }
-  }
-  /* squashing the ring's height reads as the planet turning in 3D */
-  @keyframes po-tilt {
-    0%, 100% { transform: rotate(0deg) scaleY(1); }
-    50%      { transform: rotate(3deg) scaleY(0.55); }
-  }
-  @keyframes po-orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-  @media (prefers-reduced-motion: reduce) {
-    .planet .po-sphere, .planet .po-ring, .planet .po-moon-orbit { animation: none !important; }
-  }
+  /* ── PlanetOrb: the Socrates mark on a voice call ──
+     The mark is the shipped logo, rendered whole. The design gives it two
+     states only — alive, and not yet alive — and the breathing that makes it
+     alive belongs to `.vo-mark.live` on the wrapper, so the whole mark moves
+     as one object. Nothing here animates a part of it. */
+  .planet { flex-shrink: 0; line-height: 0; }
+  .planet img { display: block; width: 100%; height: 100%; }
+  /* Dim whenever the session is not live. Keyed off the same `.live` the
+     breathing uses, so the two can never disagree about being alive. */
+  .vo-mark:not(.live) .planet { opacity: .45; }
 
   .vo-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; background: var(--ink-faint); position: relative; }
   .vo-dot::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid currentColor; opacity: 0; }

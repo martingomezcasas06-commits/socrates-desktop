@@ -31,10 +31,13 @@ const SILENCE_MS_SHORT = 420;   // utterances under ~3.5s
 const SILENCE_MS_LONG = 850;    // utterances past LONG_SPEECH_MS
 const LONG_SPEECH_MS = 3500;
 const MIN_UTTERANCE_MS = 350; // ignore blips shorter than this
-// The design system's coaching panel: --panel-w 288, header + a single caption
-// line. It was 264x138 when the caption was a scrolling block; the line now
-// ellipsises, so the panel is shorter. Extra height covers the warning row.
-export const ORB_W = 288, ORB_H = 112;
+// The design system's coaching panel. The design draws it at 288 wide, but that
+// assumes its single ✕ — we carry mute and expand too, and at 288 those ate the
+// text column until both the title and the mono line ellipsised. 348 is the
+// width at which the design's own strings fit whole. Height hugs the panel: it
+// measures 71px normally and 98px with a two-line warning, so 100 is snug with
+// nothing clipped.
+export const ORB_W = 348, ORB_H = 100;
 export const EXP_W = 384, EXP_H = 540; // expanded chat view
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
