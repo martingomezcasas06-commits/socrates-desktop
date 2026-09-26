@@ -35,6 +35,13 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
+# Windows and Linux deliver a `socrates://` link by starting a SECOND process with
+# the URL as an argument. This forwards it to the running instance (the "deep-link"
+# feature re-emits it there as an onOpenUrl event) and exits the duplicate.
+# macOS hands links to the running app itself, so it doesn't need this.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1

@@ -474,9 +474,31 @@ fn show_main(app: &AppHandle) {
     let _ = win.set_focus();
 }
 
+/// A second launch landed in this, the instance already running. On Windows that is
+/// usually a sign-in link the OS opened by starting a new process; the single-instance
+/// plugin has already re-emitted the link to the webview, so all that is left is to
+/// bring the window forward. Deliberately NOT `show_main`: that resets size and the
+/// overlay, and the person may be mid-call with the coaching panel floating.
+#[cfg(not(target_os = "macos"))]
+fn focus_existing(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("main") else { return };
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Must be the first plugin registered, so a duplicate process exits before
+    // anything else in it starts up.
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        focus_existing(app);
+    }));
+
+    let builder = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())

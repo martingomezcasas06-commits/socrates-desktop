@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { supabase } from "./lib/supabase";
 import AuthPage from "./pages/AuthPage";
@@ -22,6 +22,11 @@ function displayName(s: string): string {
   if (!s.includes("@")) return s;
   return s.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+// Module-level, not state: it must survive React re-running the effect (StrictMode
+// in dev does exactly that), or the same code gets exchanged twice and the second
+// attempt reports a spurious "Exchange failed".
+const handledAuthCodes = new Set<string>();
 
 export default function App() {
   const [session, setSession]         = useState<Session | null>(null);
@@ -60,9 +65,15 @@ export default function App() {
       }
     });
 
-    // Handle deep link: socrates://auth/callback?code=xxx
-    onOpenUrl((urls) => {
-      const url = urls[0];
+    // Sign-in links arrive as socrates://auth/callback?code=… by two routes:
+    //  - onOpenUrl: the app was already running. Always the case on macOS; on
+    //    Windows only because the single-instance plugin forwards the second
+    //    process the OS starts for the link.
+    //  - getCurrent: the link itself launched the app from closed.
+    // Windows used to have neither, which is why sign-in by link never completed
+    // there. Both routes can report the same link, and a PKCE code can only be
+    // exchanged once, so each code is handled at most once.
+    const handleAuthUrl = (url: string | undefined) => {
       setDeepLinkRaw(url ?? "(empty)");   // show immediately — synchronous
       if (!url) { setDeepLinkError("Deep link fired but URL was empty"); return; }
       try {
@@ -82,6 +93,9 @@ export default function App() {
           return;
         }
 
+        if (handledAuthCodes.has(code)) return;
+        handledAuthCodes.add(code);
+
         supabase.auth.exchangeCodeForSession(code)
           .then(({ error }) => {
             if (error) setDeepLinkError(`Exchange failed: ${error.message}`);
@@ -91,9 +105,19 @@ export default function App() {
       } catch (e) {
         setDeepLinkError(`Parse error: ${String(e)} — raw URL: ${url}`);
       }
-    }).catch((e) => setDeepLinkError(`onOpenUrl setup failed: ${String(e)}`));
+    };
 
-    return () => subscription.unsubscribe();
+    getCurrent()
+      .then((urls) => { if (urls?.length) handleAuthUrl(urls[0]); })
+      .catch((e) => setDeepLinkError(`getCurrent failed: ${String(e)}`));
+
+    const unlisten = onOpenUrl((urls) => handleAuthUrl(urls[0]))
+      .catch((e) => { setDeepLinkError(`onOpenUrl setup failed: ${String(e)}`); return undefined; });
+
+    return () => {
+      subscription.unsubscribe();
+      void unlisten.then((stop) => stop?.());
+    };
   }, []);
 
   function startCoaching(toolName: string) {
