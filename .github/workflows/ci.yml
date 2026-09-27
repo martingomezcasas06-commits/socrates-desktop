@@ -1,0 +1,47 @@
+# Every push and pull request. Release builds stay in release.yml (tags only).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Types, unit tests, colours, call-panel layout
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx tsc --noEmit -p tsconfig.app.json
+      - run: npm test
+      - run: npm run check:colors
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:panel
+
+  rust-windows:
+    # Windows on purpose: the single-instance and no-activate code only compiles
+    # there, and cannot be cross-checked from a Mac. This catches a Windows
+    # compile error on every push instead of in a release build.
+    name: Rust tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - run: npm ci
+      # tauri's build script expects the frontend to exist.
+      - run: npm run build
+      - run: cargo test --lib
+        working-directory: src-tauri

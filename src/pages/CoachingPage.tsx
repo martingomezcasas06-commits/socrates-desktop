@@ -250,29 +250,47 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
 
   // ── Autonomous ──
   async function acceptOffer() {
+    // The offer IS the goal ("Want me to open Memory settings for you?"). It used
+    // to be discarded here, so autonomous mode was never told what to do.
+    const goal = offer;
     setOffer(null); setMode("autonomous"); autonomousRef.current = true;
     setAutonomousLog([]); setSummary(null);
     if (IS_TAURI) {
       const win = await getTauriWindow();
       await win.setAlwaysOnTop(false); await win.hide();
     }
-    await runAutonomousLoop();
+    await runAutonomousLoop(goal);
     // Back to the floating advisory companion.
     if (IS_TAURI) await enterFloating();
   }
 
-  async function runAutonomousLoop() {
+  // Hard cap on actions per takeover. Socrates is driving someone's mouse and
+  // keyboard; if it has not arrived in this many steps, it hands control back.
+  const MAX_AUTONOMOUS_STEPS = 15;
+
+  async function runAutonomousLoop(goal: string | null) {
+    // A local array, not the autonomousLog state: state read inside this loop is
+    // the value from the render that started it (always []), so the model was
+    // never shown what it had already done and could repeat the same click.
+    const log: string[] = [];
     while (autonomousRef.current) {
+      if (log.length >= MAX_AUTONOMOUS_STEPS) {
+        autonomousRef.current = false;
+        setSummary("I couldn't finish that on my own, so I've handed control back to you.");
+        setMode("advisory");
+        break;
+      }
       try {
         const screenshot = await captureScreen();
         const res = await apiFetch(`${API_URL}/api/coaching/autonomous`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ screenshot, tool, log: autonomousLog }),
+          body: JSON.stringify({ screenshot, tool, log, goal }),
         });
         if (!res.ok) { autonomousRef.current = false; break; }
         const data: AutonomousResult = await res.json();
-        setAutonomousLog((prev) => [...prev, data.action_taken]);
+        log.push(data.action_taken);
+        setAutonomousLog([...log]);
         if (data.task_complete) {
           autonomousRef.current = false;
           setSummary(data.summary ?? "Done! Handing control back to you.");

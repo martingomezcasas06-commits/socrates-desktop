@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test": "vitest run",
+    "check:colors": "COLOR_ROOTS=src COLOR_TOKEN_DIRS=none COLOR_BASELINE=scripts/color-literals.baseline.json node scripts/check-colors.mjs",
+    "test:panel": "playwright test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
@@ -25,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@tauri-apps/cli": "^2.11.2",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
@@ -36,6 +40,7 @@
     "globals": "^17.5.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^3.2.7"
   }
 }

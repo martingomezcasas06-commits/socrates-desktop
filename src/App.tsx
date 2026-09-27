@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { parseAuthLink, createCodeGate } from "./lib/authLink";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { supabase } from "./lib/supabase";
 import AuthPage from "./pages/AuthPage";
@@ -26,7 +27,7 @@ function displayName(s: string): string {
 // Module-level, not state: it must survive React re-running the effect (StrictMode
 // in dev does exactly that), or the same code gets exchanged twice and the second
 // attempt reports a spurious "Exchange failed".
-const handledAuthCodes = new Set<string>();
+const firstTimeForCode = createCodeGate();
 
 export default function App() {
   const [session, setSession]         = useState<Session | null>(null);
@@ -75,35 +76,19 @@ export default function App() {
     // exchanged once, so each code is handled at most once.
     const handleAuthUrl = (url: string | undefined) => {
       setDeepLinkRaw(url ?? "(empty)");   // show immediately — synchronous
-      if (!url) { setDeepLinkError("Deep link fired but URL was empty"); return; }
-      try {
-        const parsed = new URL(url.replace(/^socrates:\/\//, "https://socrates.app/"));
-        const code = parsed.searchParams.get("code");
-        const errorParam = parsed.searchParams.get("error");
-        const errorDesc = parsed.searchParams.get("error_description");
-
-        if (errorParam) {
-          setDeepLinkError(`OAuth error: ${errorDesc || errorParam}`);
-          return;
-        }
-
-        if (!code) {
-          // Maybe tokens are in the hash (implicit flow fallback)
-          setDeepLinkError(`No code in URL: ${url}`);
-          return;
-        }
-
-        if (handledAuthCodes.has(code)) return;
-        handledAuthCodes.add(code);
-
-        supabase.auth.exchangeCodeForSession(code)
-          .then(({ error }) => {
-            if (error) setDeepLinkError(`Exchange failed: ${error.message}`);
-          })
-          .catch((e) => setDeepLinkError(`Exchange threw: ${String(e)}`));
-
-      } catch (e) {
-        setDeepLinkError(`Parse error: ${String(e)} — raw URL: ${url}`);
+      const link = parseAuthLink(url);
+      switch (link.kind) {
+        case "empty": setDeepLinkError("Deep link fired but URL was empty"); return;
+        case "error": setDeepLinkError(`OAuth error: ${link.message}`); return;
+        case "no-code": setDeepLinkError(`No code in URL: ${link.url}`); return;
+        case "unparseable": setDeepLinkError(`Parse error: ${link.reason} — raw URL: ${link.url}`); return;
+        case "code":
+          if (!firstTimeForCode(link.code)) return;
+          supabase.auth.exchangeCodeForSession(link.code)
+            .then(({ error }) => {
+              if (error) setDeepLinkError(`Exchange failed: ${error.message}`);
+            })
+            .catch((e) => setDeepLinkError(`Exchange threw: ${String(e)}`));
       }
     };
 

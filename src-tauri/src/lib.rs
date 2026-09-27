@@ -71,12 +71,29 @@ fn primary_monitor() -> Result<Monitor, String> {
 /// e.g. ÷2 on Retina). So: logical = downscaled × (logicalSize / downscaledSize),
 /// which reduces to 1 / (scale_factor × downscale_factor).
 fn coord_ratio(m: &Monitor) -> f32 {
-    let pw = m.width().unwrap_or(0) as f32;
-    let ph = m.height().unwrap_or(0) as f32;
-    let scale = m.scale_factor().unwrap_or(1.0);
-    let max_side = pw.max(ph);
-    let downscale = if max_side > MAX_SIDE as f32 { MAX_SIDE as f32 / max_side } else { 1.0 };
+    coord_ratio_for(m.width().unwrap_or(0), m.height().unwrap_or(0), m.scale_factor().unwrap_or(1.0), MAX_SIDE)
+}
+
+/// The arithmetic behind `coord_ratio`, separated from the monitor so it can be
+/// tested. `physical_*` is the capture size, `scale` the backing scale factor.
+///
+/// NOTE (suspected, untested on Windows): dividing by `scale` targets logical
+/// points, which is what enigo uses on macOS. If enigo takes physical pixels on
+/// Windows (a per-monitor-DPI-aware process), clicks on a 125%/150% display land
+/// at 80%/67% of the intended position. See B12 in docs/testing-plan.md.
+fn coord_ratio_for(physical_w: u32, physical_h: u32, scale: f32, max_side: u32) -> f32 {
+    let longest = physical_w.max(physical_h) as f32;
+    let downscale = if longest > max_side as f32 { max_side as f32 / longest } else { 1.0 };
     if scale <= 0.0 || downscale <= 0.0 { 1.0 } else { 1.0 / (scale * downscale) }
+}
+
+/// Size a capture is downscaled to before it is sent: longest side at most `max_side`.
+fn downscaled_size(w: u32, h: u32, max_side: u32) -> (u32, u32) {
+    if w.max(h) <= max_side {
+        return (w, h);
+    }
+    let k = max_side as f32 / w.max(h) as f32;
+    ((w as f32 * k) as u32, (h as f32 * k) as u32)
 }
 
 /// Capture the primary monitor, downscale it, and return it as a base64 JPEG.
@@ -111,12 +128,8 @@ fn capture_screen(max_side: Option<u32>, quality: Option<u8>) -> Result<String, 
     let dynamic = image::DynamicImage::ImageRgba8(rgba);
     let (w, h) = (dynamic.width(), dynamic.height());
     let resized = if w.max(h) > max_side {
-        let scale = max_side as f32 / w.max(h) as f32;
-        dynamic.resize(
-            (w as f32 * scale) as u32,
-            (h as f32 * scale) as u32,
-            image::imageops::FilterType::Triangle,
-        )
+        let (nw, nh) = downscaled_size(w, h, max_side);
+        dynamic.resize(nw, nh, image::imageops::FilterType::Triangle)
     } else {
         dynamic
     };
@@ -617,4 +630,54 @@ pub fn run() {
             }
             let _ = (app_handle, &event);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where a click the model aims at the centre of the screenshot actually lands.
+    fn centre_lands_at(w: u32, h: u32, scale: f32) -> (f32, f32) {
+        let (dw, dh) = downscaled_size(w, h, MAX_SIDE);
+        let r = coord_ratio_for(w, h, scale, MAX_SIDE);
+        (dw as f32 / 2.0 * r, dh as f32 / 2.0 * r)
+    }
+
+    #[test]
+    fn captures_never_exceed_max_side() {
+        for (w, h) in [(5120, 2880), (2880, 1800), (1920, 1080), (1080, 1920), (1366, 768), (800, 600)] {
+            let (dw, dh) = downscaled_size(w, h, MAX_SIDE);
+            assert!(dw.max(dh) <= MAX_SIDE, "{w}x{h} -> {dw}x{dh}");
+            if w.max(h) <= MAX_SIDE { assert_eq!((dw, dh), (w, h), "small captures are left alone"); }
+        }
+    }
+
+    #[test]
+    fn aspect_ratio_survives_downscaling() {
+        let (dw, dh) = downscaled_size(2880, 1800, MAX_SIDE);
+        assert!(((dw as f32 / dh as f32) - 1.6).abs() < 0.01);
+    }
+
+    #[test]
+    fn retina_mac_centre_click_hits_the_logical_centre() {
+        // 2880x1800 physical at 2x = a 1440x900 point screen.
+        let (x, y) = centre_lands_at(2880, 1800, 2.0);
+        assert!((x - 720.0).abs() < 2.0 && (y - 450.0).abs() < 2.0, "({x}, {y})");
+    }
+
+    #[test]
+    fn standard_1080p_centre_click_hits_the_centre() {
+        let (x, y) = centre_lands_at(1920, 1080, 1.0);
+        assert!((x - 960.0).abs() < 2.0 && (y - 540.0).abs() < 2.0, "({x}, {y})");
+    }
+
+    #[test]
+    fn unscaled_small_screen_is_one_to_one() {
+        assert_eq!(coord_ratio_for(1366, 768, 1.0, MAX_SIDE), 1.0);
+    }
+
+    #[test]
+    fn nonsense_monitor_values_fall_back_to_one() {
+        assert_eq!(coord_ratio_for(0, 0, 0.0, MAX_SIDE), 1.0);
+    }
 }

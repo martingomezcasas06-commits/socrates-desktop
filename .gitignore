@@ -18,3 +18,7 @@ dist-ssr
 
 # Rust / Tauri
 src-tauri/target
+
+# test output
+/test-results/
+/playwright-report/
