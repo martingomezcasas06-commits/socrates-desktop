@@ -12,8 +12,19 @@ name: release
 # Required repository secrets:
 #   TAURI_SIGNING_PRIVATE_KEY  contents of ~/.tauri/socrates-updater.key
 #
-# That is the only secret required. The key carries no passphrase, and GitHub
-# will not store an empty secret, so the password is set to "" in the job below.
+# The key carries no passphrase, and GitHub will not store an empty secret, so the
+# password is set to "" in the job below.
+#
+# Optional: Apple Developer ID signing + notarization for the macOS build. If
+# APPLE_CERTIFICATE is missing, macOS still builds, just unsigned (Gatekeeper warns).
+#   APPLE_CERTIFICATE           base64 of the "Developer ID Application" .p12:
+#                                 base64 -i cert.p12 | pbcopy
+#   APPLE_CERTIFICATE_PASSWORD  the .p12's export password
+#   APPLE_SIGNING_IDENTITY      "Developer ID Application: Name (TEAMID)"
+#   APPLE_API_ISSUER            App Store Connect API key: Issuer ID
+#   APPLE_API_KEY               App Store Connect API key: Key ID
+#   APPLE_API_KEY_P8            the AuthKey_XXXX.p8 file's full text
+# Without the three APPLE_API_* secrets the build is signed but not notarized.
 
 on:
   push:
@@ -64,6 +75,39 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      # Exports the Apple variables only when the secrets exist. Tauri keys off the
+      # variable being present, so an unset secret must stay absent, not blank.
+      - name: Load Apple signing credentials (macOS only)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_CERTIFICATE is not set: the macOS build will be unsigned."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=$(printf '%s' "$APPLE_CERTIFICATE" | tr -d '[:space:]')"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+          } >> "$GITHUB_ENV"
+          if [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ]; then
+            key_path="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$key_path"
+            {
+              echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+              echo "APPLE_API_KEY=$APPLE_API_KEY"
+              echo "APPLE_API_KEY_PATH=$key_path"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::App Store Connect API key not set: signed but NOT notarized."
+          fi
 
       - name: Build, sign the update, and publish
         uses: tauri-apps/tauri-action@v0

@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
   <!-- Required so macOS lets the app use the microphone for hands-free voice coaching.
-       Without this key, accessing the mic crashes the app. Non-sandboxed app, so no
-       audio-input entitlement is needed — the usage string + TCC prompt is enough. -->
+       Without this key, accessing the mic crashes the app. Signed (hardened runtime)
+       builds also need the audio-input entitlement in Entitlements.plist. -->
   <key>NSMicrophoneUsageDescription</key>
   <string>Socrates listens during a voice coaching call so you can talk to it out loud instead of typing.</string>
 </dict>
