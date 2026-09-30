@@ -240,6 +240,12 @@ export default function RealtimeVoiceSession({
       // 1. Ephemeral key from our server (bumps session count, builds tutor instructions)
       let secret = "";
       let modelName = "gpt-realtime-2.1";
+      // The first spoken turn, written by the server: it knows the person's name
+      // and the goal from their interview. The fallback names no one.
+      let opening =
+        "Open the call: greet the person warmly in ONE short spoken sentence, " +
+        "then ask one simple question about what they'd like to work on. " +
+        "Do not teach or give advice yet — just say hello and hand the turn back.";
       try {
         const res = await apiFetch(`${API_URL}/api/coaching/realtime-session`, {
           method: "POST",
@@ -247,9 +253,10 @@ export default function RealtimeVoiceSession({
           body: JSON.stringify({ tool }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { client_secret: string; level?: string; model?: string };
+        const data = (await res.json()) as { client_secret: string; level?: string; model?: string; opening?: string };
         secret = data.client_secret;
         modelName = data.model ?? modelName;
+        if (data.opening) opening = data.opening;
         vlog('REALTIME: mint ok, model=' + data.model);
       } catch (e) {
         vlog('REALTIME: mint FAILED → falling back to classic. ' + String(e));
@@ -454,16 +461,12 @@ export default function RealtimeVoiceSession({
             },
           });
           // Open the call with an actual greeting. Left to its own instructions the
-          // tutor dives straight into a lesson ("Nice, let's level up with a more
-          // advanced move…") because Martin reads as an advanced returning user —
-          // no hello, no name. A per-response `instructions` override fixes it
-          // here, without redeploying the server prompt.
+          // tutor dives straight into a lesson with no hello. A per-response
+          // `instructions` override fixes that; it REPLACES the session
+          // instructions for this one turn, so the server writes it with the
+          // person's name and the goal from their interview.
           sendScreen();
-          requestResponse(
-            "Open the call: greet Martin warmly by name in ONE short spoken sentence, " +
-            "then ask one simple question about what he'd like to work on. " +
-            "Do not teach or give advice yet — just say hello and hand the turn back.",
-          );
+          requestResponse(opening);
         };
 
         dc.onmessage = (msg) => {
