@@ -20,8 +20,11 @@ import Icon from "../Icon";
 import PlanetOrb from "./PlanetOrb";
 import { vlog } from "../lib/vlog";
 import { apiFetch } from "../lib/api";
+import { VoiceUsage } from "../lib/voiceUsage";
 import { useSmoothText } from "../lib/useSmoothText";
+import { useT } from "../i18n";
 import { floatWindow, restoreWindow, captureScreen, ORB_W, ORB_H, EXP_W, EXP_H } from "./VoiceSession";
+import { fingerprint, screenChanged } from "../lib/screenDiff";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -34,7 +37,6 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
 type Turn = { role: "user" | "assistant"; content: string; itemId?: string };
 type Status = "connecting" | "speaking" | "listening" | "thinking";
 
-const IDLE_SHOT_MS = 10000; // periodic screen refresh while nobody is talking
 const PERM_RECHECK_MS = 3000; // poll for Screen Recording being switched on mid-call
 
 // Loudness (RMS, 0–1) the mic must reach for a turn to count as real speech.
@@ -57,6 +59,11 @@ export default function RealtimeVoiceSession({
   onEnd: () => void;
   onFallback: (reason: string) => void;
 }) {
+  const { t } = useT();
+  // The mount effect keeps its first closures for the whole call; read the
+  // translator through a ref so a mid-call language switch still applies.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [status, setStatus] = useState<Status>("connecting");
   const [caption, setCaption] = useState("");        // live caption text, streamed
   // Rendered instead of `caption`: glides in character by character so the
@@ -83,6 +90,7 @@ export default function RealtimeVoiceSession({
   const feedRef = useRef<HTMLDivElement>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const usageRef = useRef<VoiceUsage | null>(null);  // meters the call; reports to /api/usage/voice
   const dcRef = useRef<RTCDataChannel | null>(null);
   const micRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
@@ -92,7 +100,11 @@ export default function RealtimeVoiceSession({
   const latestShotRef = useRef<string>("");
   const shotTimerRef = useRef<number | null>(null);
   const permTimerRef = useRef<number | null>(null);
-  const idleShotRef = useRef<number>(0);
+  const latestPrintRef = useRef<Uint8Array | null>(null);   // fingerprint of latestShotRef
+  const sentPrintRef = useRef<Uint8Array | null>(null);     // fingerprint of the last frame Socrates was sent
+  const sentShotIdRef = useRef<string | null>(null);        // its conversation item id
+  const sentShotSeenRef = useRef(true);                     // has a reply been generated since it was sent?
+  const shotSeqRef = useRef(0);
   const aliveRef = useRef(true);
   const statusRef = useRef<Status>("connecting");
   const assistantTextRef = useRef(""); // accumulates the current reply's transcript
@@ -158,15 +170,32 @@ export default function RealtimeVoiceSession({
     }
   }, []);
 
-  /** Push the freshest screenshot into the conversation so the model sees "now". */
+  /**
+   * Push the freshest screenshot into the conversation so the model sees "now".
+   *
+   * Sent only when the screen differs from the last frame Socrates was sent, and
+   * any visible change counts (lib/screenDiff). An identical screen adds nothing:
+   * he already has it. A frame that no reply has read yet is deleted when a newer
+   * one replaces it. It was never billed, and deleting the tail of the
+   * conversation leaves the cached prefix intact. Frames a reply has read stay.
+   */
   const sendScreen = useCallback(() => {
     const shot = latestShotRef.current;
     if (!shot) return;
-    idleShotRef.current = Date.now();
-    vlog('REALTIME: sending screenshot (' + Math.round(shot.length / 1024) + ' KB base64)');
+    if (!screenChanged(sentPrintRef.current, latestPrintRef.current)) return;
+    const prevId = sentShotIdRef.current;
+    if (prevId && !sentShotSeenRef.current) {
+      send({ type: "conversation.item.delete", event_id: `del_${prevId}`, item_id: prevId });
+    }
+    const id = `shot_${Date.now()}_${++shotSeqRef.current}`;
+    sentShotIdRef.current = id;
+    sentShotSeenRef.current = false;
+    sentPrintRef.current = latestPrintRef.current;
+    vlog('REALTIME: sending screenshot ' + id + ' (' + Math.round(shot.length / 1024) + ' KB base64)');
     send({
       type: "conversation.item.create",
       item: {
+        id,
         type: "message",
         role: "user",
         content: [{ type: "input_image", image_url: `data:image/jpeg;base64,${shot}` }],
@@ -240,12 +269,10 @@ export default function RealtimeVoiceSession({
       // 1. Ephemeral key from our server (bumps session count, builds tutor instructions)
       let secret = "";
       let modelName = "gpt-realtime-2.1";
-      // The first spoken turn, written by the server: it knows the person's name
-      // and the goal from their interview. The fallback names no one.
-      let opening =
-        "Open the call: greet the person warmly in ONE short spoken sentence, " +
-        "then ask one simple question about what they'd like to work on. " +
-        "Do not teach or give advice yet — just say hello and hand the turn back.";
+      // The first spoken turn, written by the server: it knows the person's name,
+      // the goal from their interview and (via X-Socrates-Locale / users.locale)
+      // the language. The fallback names no one, and follows the app's language.
+      let opening = tRef.current("voice.openingFallback");
       try {
         const res = await apiFetch(`${API_URL}/api/coaching/realtime-session`, {
           method: "POST",
@@ -256,6 +283,7 @@ export default function RealtimeVoiceSession({
         const data = (await res.json()) as { client_secret: string; level?: string; model?: string; opening?: string };
         secret = data.client_secret;
         modelName = data.model ?? modelName;
+        usageRef.current = new VoiceUsage(tool, modelName);
         if (data.opening) opening = data.opening;
         vlog('REALTIME: mint ok, model=' + data.model);
       } catch (e) {
@@ -476,9 +504,10 @@ export default function RealtimeVoiceSession({
             response_id?: string; item_id?: string;
             response?: { id?: string };
             item?: { id?: string; role?: string; type?: string; content?: { type?: string }[] };
-            error?: { message?: string };
+            error?: { message?: string; event_id?: string };
           };
           try { ev = JSON.parse(msg.data); } catch { return; }
+          usageRef.current?.add(ev as Parameters<VoiceUsage["add"]>[0]);
 
           switch (ev.type) {
             case "input_audio_buffer.speech_started":
@@ -497,6 +526,7 @@ export default function RealtimeVoiceSession({
               lastTurnPeakRef.current = micPeakRef.current;
               break;
             case "response.created":
+              sentShotSeenRef.current = true; // this reply reads the latest frame, so keep it
               activeRespRef.current = ev.response?.id ?? null;
               respBusyRef.current = true;
               setStreaming(true);
@@ -591,6 +621,11 @@ export default function RealtimeVoiceSession({
             case "error": {
               console.error("realtime error", ev);
               const m = ev.error?.message ?? "";
+              // Deleting an unread screenshot that is already gone is harmless.
+              if (ev.error?.event_id?.startsWith("del_")) {
+                vlog('REALTIME: screenshot delete refused (harmless): ' + m);
+                break;
+              }
               // A rejected response.create means the server already had one running,
               // so our optimistic "busy" flag is right — but nothing will ever clear
               // it unless we do, and then no manual create would fire again.
@@ -673,7 +708,8 @@ export default function RealtimeVoiceSession({
           }
           if (s) {
             latestShotRef.current = s;
-            if (Date.now() - idleShotRef.current > IDLE_SHOT_MS) sendScreen();
+            latestPrintRef.current = await fingerprint(s);
+            sendScreen(); // only goes out if something on screen changed
           }
         };
 
@@ -741,7 +777,7 @@ export default function RealtimeVoiceSession({
                 }
               } catch { /* older build */ }
             }
-            setWarn("I can't see your screen — turn on Screen Recording for Socrates in System Settings ▸ Privacy & Security, then reopen the app.");
+            setWarn(tRef.current("voice.screenWarnRealtime"));
             announceScreen(false);
           }
         };
@@ -756,6 +792,8 @@ export default function RealtimeVoiceSession({
     return () => {
       cancelled = true;
       aliveRef.current = false;
+      void usageRef.current?.stop();
+      usageRef.current = null;
       if (shotTimerRef.current) clearInterval(shotTimerRef.current);
       if (permTimerRef.current) clearInterval(permTimerRef.current);
       if (errTimerRef.current) clearTimeout(errTimerRef.current);
@@ -790,15 +828,15 @@ export default function RealtimeVoiceSession({
 
   function sendTyped(e: React.FormEvent) {
     e.preventDefault();
-    const t = typed.trim();
-    if (!t) return;
+    const text = typed.trim();
+    if (!text) return;
     setTyped("");
-    setYouSaid(t);
-    pushTurn({ role: "user", content: t });
+    setYouSaid(text);
+    pushTurn({ role: "user", content: text });
     sendScreen();
     send({
       type: "conversation.item.create",
-      item: { type: "message", role: "user", content: [{ type: "input_text", text: t }] },
+      item: { type: "message", role: "user", content: [{ type: "input_text", text }] },
     });
     // Typing is a deliberate interruption. If Socrates is mid-sentence, stop him
     // and answer what was actually asked instead of queueing behind a reply to
@@ -826,6 +864,8 @@ export default function RealtimeVoiceSession({
 
   async function end() {
     aliveRef.current = false;
+    void usageRef.current?.stop();
+    usageRef.current = null;
     if (shotTimerRef.current) clearInterval(shotTimerRef.current);
     if (permTimerRef.current) clearInterval(permTimerRef.current);
     if (micWatchdogRef.current) clearInterval(micWatchdogRef.current);
@@ -842,17 +882,11 @@ export default function RealtimeVoiceSession({
      controls. Tone colours the meta line — teal normally, amber when something
      needs attention, red when the call has failed. */
   const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
-  const TITLE: Record<Status, string> = {
-    connecting: "Connecting",
-    speaking: "Socrates is talking",
-    listening: "Listening",
-    thinking: "Thinking",
-  };
   // Two facts, the way the design writes them: how long we have been going,
   // and what Socrates can currently see. Nothing else fits on one mono line.
   const meta =
-    status === "connecting" ? "starting up"
-    : [mmss, status === "listening" ? "your turn" : screenOk ? "sharing screen" : "audio only"]
+    status === "connecting" ? t("voice.metaStarting")
+    : [mmss, status === "listening" ? t("voice.metaYourTurn") : screenOk ? t("voice.metaSharing") : t("voice.metaAudioOnly")]
         .join(" · ");
   const tone = error ? "bad" : warn ? "warn" : "ok";
   const live = status === "speaking" || status === "listening";
@@ -863,7 +897,7 @@ export default function RealtimeVoiceSession({
         <PlanetOrb status={status} size={22} />
       </span>
       <span className="vo-status">
-        <b className="vo-title">{TITLE[status]}</b>
+        <b className="vo-title">{t(`voice.title.${status}`)}</b>
         <span className={`vo-meta ${tone}`}>{meta}</span>
       </span>
       {live && (
@@ -871,13 +905,13 @@ export default function RealtimeVoiceSession({
           <i /><i /><i /><i /><i /><i />
         </span>
       )}
-      <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
+      <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? t("voice.unmute") : t("voice.mute")}>
         <Icon name={muted ? "eye" : "coach"} />
       </button>
-      <button className="vo-btn" onClick={toggleExpand} title={expanded ? "Shrink to orb" : "Open chat"}>
+      <button className="vo-btn" onClick={toggleExpand} title={expanded ? t("voice.shrinkOrb") : t("voice.openChat")}>
         <Icon name={expanded ? "pop" : "chat"} />
       </button>
-      <button className="vo-btn end" onClick={end} title="End call"><Icon name="stop" /></button>
+      <button className="vo-btn end" onClick={end} title={t("voice.endCall")}><Icon name="stop" /></button>
     </>
   );
 
@@ -887,7 +921,7 @@ export default function RealtimeVoiceSession({
         <div className="ve-head">{statusHead}</div>
         <div className="ve-feed" ref={feedRef}>
           {warn && <div className="vo-warn" style={{ marginBottom: 8 }}>{warn}</div>}
-          {transcript.length === 0 && !streaming && !error && <div className="ve-empty">Your conversation shows up here. Talk to me, or type below.</div>}
+          {transcript.length === 0 && !streaming && !error && <div className="ve-empty">{t("voice.emptyFeed")}</div>}
           {transcript.map((m, i) => (
             <div key={i} className={`ve-msg ${m.role}`}>{m.content}</div>
           ))}
@@ -904,7 +938,7 @@ export default function RealtimeVoiceSession({
           {error && <div className="ve-err">{error}</div>}
         </div>
         <form className="ve-input" onSubmit={sendTyped}>
-          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Type instead of talking…" />
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={t("voice.typePlaceholder")} />
           <button type="submit" className="send-sm" disabled={!typed.trim()}><Icon name="send" /></button>
         </form>
       </div>
@@ -926,7 +960,7 @@ export default function RealtimeVoiceSession({
       ) : (
         <div className="vo-cap vo-cap-soft">
           <p className="vo-cap-line">
-            {status === "connecting" ? "Starting your call…" : youSaid ? `“${youSaid}”` : "Say hi, or ask me anything."}
+            {status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi")}
           </p>
         </div>
       )}

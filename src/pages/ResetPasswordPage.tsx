@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
+import { useT } from "../i18n";
 
 export default function ResetPasswordPage() {
+  const { t } = useT();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm]   = useState("");
   const [busy, setBusy]         = useState(false);
@@ -11,8 +13,8 @@ export default function ResetPasswordPage() {
 
   async function handleReset(e: React.FormEvent) {
     e.preventDefault();
-    if (password !== confirm) { setError("Passwords don't match."); return; }
-    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+    if (password !== confirm) { setError(t("reset.mismatch")); return; }
+    if (password.length < 8) { setError(t("reset.tooShort")); return; }
     setBusy(true); setError("");
     const { error } = await supabase.auth.updateUser({ password });
     setBusy(false);
@@ -30,21 +32,21 @@ export default function ResetPasswordPage() {
             <div style={{ width: 52, height: 52, borderRadius: "50%", margin: "0 auto 14px", background: "var(--green-soft)", border: "1px solid rgba(79,178,134,0.4)", display: "grid", placeItems: "center", color: "var(--green)" }}>
               <Icon name="check" size={26} />
             </div>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>Password updated</div>
-            <div className="dim" style={{ fontSize: 13, marginTop: 6 }}>Signing you in…</div>
+            <div style={{ fontWeight: 700, fontSize: 17 }}>{t("reset.updated")}</div>
+            <div className="dim" style={{ fontSize: 13, marginTop: 6 }}>{t("reset.signingIn")}</div>
           </div>
         ) : (
           <>
-            <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>Set a new password</h1>
-            <p className="dim" style={{ fontSize: 13.5, marginTop: 5, marginBottom: 22 }}>Choose something strong and memorable.</p>
+            <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>{t("reset.title")}</h1>
+            <p className="dim" style={{ fontSize: 13.5, marginTop: 5, marginBottom: 22 }}>{t("reset.sub")}</p>
 
             <form onSubmit={handleReset} style={{ width: "100%", display: "flex", flexDirection: "column", gap: 11 }}>
-              <input className="field" type="password" placeholder="New password (min 8 characters)" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ margin: 0 }} />
-              <input className="field" type="password" placeholder="Confirm password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required style={{ margin: 0 }} />
+              <input className="field" type="password" placeholder={t("reset.newPlaceholder")} value={password} onChange={(e) => setPassword(e.target.value)} required style={{ margin: 0 }} />
+              <input className="field" type="password" placeholder={t("reset.confirmPlaceholder")} value={confirm} onChange={(e) => setConfirm(e.target.value)} required style={{ margin: 0 }} />
               {password.length > 0 && <StrengthBar password={password} />}
               {error && <div style={{ fontSize: 12.5, color: "var(--red)", textAlign: "left" }}>{error}</div>}
               <button type="submit" disabled={busy} className="btn btn-primary btn-lg btn-block" style={{ marginTop: 4 }}>
-                {busy ? "Saving…" : <>Update password <Icon name="arrow" /></>}
+                {busy ? t("reset.saving") : <>{t("reset.update")} <Icon name="arrow" /></>}
               </button>
             </form>
           </>
@@ -55,8 +57,9 @@ export default function ResetPasswordPage() {
 }
 
 function StrengthBar({ password }: { password: string }) {
+  const { m } = useT();
   const score = getStrength(password);
-  const labels = ["Too short", "Weak", "Fair", "Strong", "Very strong"];
+  const labels = m.reset.strength;
   const colors = ["var(--red)", "var(--warm)", "var(--amber)", "var(--green)", "var(--green)"];
   return (
     <div style={{ width: "100%" }}>

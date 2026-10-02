@@ -4,22 +4,11 @@ import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
 import ToolLogo from "../components/ToolLogo";
 import { apiFetch } from "../lib/api";
+import { useT } from "../i18n";
 
 type Message = { role: "user" | "assistant"; content: string };
 
 const API_URL = import.meta.env.VITE_API_URL as string;
-
-const CHAT_SUGGEST = [
-  "How do I write better prompts?",
-  "Which tool should I use to summarise a meeting?",
-  "Help me get started with my stack",
-];
-
-const RECENT_TOPICS = [
-  "Writing better prompts",
-  "Summarising long documents",
-  "Getting started with my stack",
-];
 
 const TOOL_GRADIENTS = [
   ["#15637F", "#8FD4E8"],
@@ -35,9 +24,10 @@ function initialsOf(s: string): string {
 }
 
 export default function ChatPage({ session }: { session: Session }) {
-  const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Hi! I'm Socrates. Ask me anything about your AI tools or how to use them." },
-  ]);
+  const { t, m: msgs } = useT();
+  // The greeting is rendered from the catalog rather than stored, so it follows
+  // a language switch. It is still sent as the first turn, as it always was.
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [tools, setTools] = useState<string[]>([]);
@@ -85,7 +75,10 @@ export default function ChatPage({ session }: { session: Session }) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ messages: next.map((m) => ({ role: m.role, content: m.content })) }),
+        body: JSON.stringify({
+          messages: [{ role: "assistant", content: t("chat.greeting") }, ...next]
+            .map((m) => ({ role: m.role, content: m.content })),
+        }),
       });
 
       if (!res.ok) {
@@ -97,7 +90,7 @@ export default function ChatPage({ session }: { session: Session }) {
       setMessages([...next, { role: "assistant", content: reply }]);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      setMessages([...next, { role: "assistant", content: `Error: ${detail}` }]);
+      setMessages([...next, { role: "assistant", content: t("chat.error", { detail }) }]);
     }
 
     setBusy(false);
@@ -119,20 +112,24 @@ export default function ChatPage({ session }: { session: Session }) {
     <>
       <div className="head">
         <div className="titles">
-          <h1>Chat with <span className="ital">Socrates</span></h1>
-          <div className="sub">Your always-on AI advisor</div>
+          <h1>{t("chat.titleBefore")}<span className="ital">{t("chat.titleAccent")}</span></h1>
+          <div className="sub">{t("chat.sub")}</div>
         </div>
       </div>
 
       <div className="chat-layout">
         <div className="chat-main">
           <div className="chat-stream" ref={listRef}>
+            <div className="msg bot">
+              <div className="av"><Icon name="sparkle" /></div>
+              <div className="bubble">{t("chat.greeting")}</div>
+            </div>
             {messages.map((m, i) =>
               m.role === "assistant" ? (
                 <div key={i} className="msg bot">
                   <div className="av"><Icon name="sparkle" /></div>
                   <div className="bubble">
-                    {m.content || <span style={{ opacity: 0.4 }}>thinking…</span>}
+                    {m.content || <span style={{ opacity: 0.4 }}>{t("common.thinking")}</span>}
                   </div>
                 </div>
               ) : (
@@ -145,14 +142,14 @@ export default function ChatPage({ session }: { session: Session }) {
             {busy && (
               <div className="msg bot">
                 <div className="av"><Icon name="sparkle" /></div>
-                <div className="bubble"><span style={{ opacity: 0.4 }}>thinking…</span></div>
+                <div className="bubble"><span style={{ opacity: 0.4 }}>{t("common.thinking")}</span></div>
               </div>
             )}
           </div>
 
           <div className="chat-foot">
             <div className="chips">
-              {CHAT_SUGGEST.map((c) => (
+              {msgs.chat.suggest.map((c) => (
                 <button
                   key={c}
                   className="chip"
@@ -170,7 +167,7 @@ export default function ChatPage({ session }: { session: Session }) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder="Ask Socrates anything…"
+                placeholder={t("chat.placeholder")}
                 disabled={busy}
               />
               <button className="send" type="submit" disabled={!input.trim() || busy}>
@@ -182,24 +179,24 @@ export default function ChatPage({ session }: { session: Session }) {
 
         <aside className="chat-aside">
           <div className="aside-sec">
-            <h4>Your tools</h4>
-            {(tools.length ? tools : ["ChatGPT", "Claude", "Perplexity", "Notion AI"]).map((t, i) => (
-              <div className="aside-tool" key={t + i}>
+            <h4>{t("chat.yourTools")}</h4>
+            {(tools.length ? tools : ["ChatGPT", "Claude", "Perplexity", "Notion AI"]).map((tool, i) => (
+              <div className="aside-tool" key={tool + i}>
                 <ToolLogo
-                  name={t}
+                  name={tool}
                   className="lg"
                   fallbackStyle={{
                     background: `linear-gradient(135deg, ${TOOL_GRADIENTS[i % TOOL_GRADIENTS.length][0]}, ${TOOL_GRADIENTS[i % TOOL_GRADIENTS.length][1]})`,
                   }}
                 />
-                <span className="nm">{t}</span>
+                <span className="nm">{tool}</span>
               </div>
             ))}
           </div>
           <div className="aside-sec">
-            <h4>Recent topics</h4>
-            {RECENT_TOPICS.map((t) => (
-              <div className="aside-topic" key={t}>{t}</div>
+            <h4>{t("chat.recentTopics")}</h4>
+            {msgs.chat.recentTopicsList.map((topic) => (
+              <div className="aside-topic" key={topic}>{topic}</div>
             ))}
           </div>
         </aside>

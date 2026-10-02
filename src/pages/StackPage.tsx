@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import Icon from "../Icon";
 import ToolLogo from "../components/ToolLogo";
+import { useT } from "../i18n";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const WEB_APP_URL = import.meta.env.VITE_API_URL as string;
@@ -19,6 +20,8 @@ async function openExternal(url: string) {
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+const ALL = "\u0000all";
 
 type Rec = {
   id: string;
@@ -47,10 +50,12 @@ export default function StackPage({
   session: Session;
   onStartCoaching: (tool: string) => void;
 }) {
+  const { t } = useT();
   const [recs, setRecs] = useState<Rec[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState("All");
+  // ALL is a sentinel, not a label: a category could be called "All" / "Todas".
+  const [activeFilter, setActiveFilter] = useState<string>(ALL);
 
   useEffect(() => {
     async function load() {
@@ -94,13 +99,13 @@ export default function StackPage({
     for (const r of recs) {
       if (r.tool_category && !cats.includes(r.tool_category)) cats.push(r.tool_category);
     }
-    return ["All", ...cats.slice(0, 4)];
+    return [ALL, ...cats.slice(0, 4)];
   }, [recs]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return recs.filter((r) => {
-      const matchesFilter = activeFilter === "All" || r.tool_category === activeFilter;
+      const matchesFilter = activeFilter === ALL || r.tool_category === activeFilter;
       const matchesQuery =
         !q ||
         r.tool_name.toLowerCase().includes(q) ||
@@ -115,8 +120,8 @@ export default function StackPage({
       <>
         <div className="head">
           <div className="titles">
-            <h1>Your <span className="ital">stack</span></h1>
-            <div className="sub">Loading your tools…</div>
+            <h1>{t("stack.titleBefore")}<span className="ital">{t("stack.titleAccent")}</span></h1>
+            <div className="sub">{t("stack.loading")}</div>
           </div>
         </div>
       </>
@@ -128,8 +133,8 @@ export default function StackPage({
       <div className="scroll">
         <div className="head">
           <div className="titles">
-            <h1>Your <span className="ital">stack</span></h1>
-            <div className="sub">Approved tools will appear here</div>
+            <h1>{t("stack.titleBefore")}<span className="ital">{t("stack.titleAccent")}</span></h1>
+            <div className="sub">{t("stack.emptySub")}</div>
           </div>
         </div>
         <div className="empty-rich anim">
@@ -137,30 +142,27 @@ export default function StackPage({
             <div className="ring" />
             <div className="core"><Icon name="stack" /></div>
           </div>
-          <h3>No tools approved <span className="ital">yet</span></h3>
-          <p>
-            Once you finish your onboarding interview and your manager signs off, your tailored
-            AI toolkit lands right here.
-          </p>
+          <h3>{t("stack.emptyTitleBefore")}<span className="ital">{t("stack.emptyTitleAccent")}</span></h3>
+          <p>{t("stack.emptyBody")}</p>
           <div className="empty-steps">
             <div className="empty-step">
               <span className="n">01</span>
-              <span className="tx"><b>Finish onboarding</b>A ~30-min chat about how you work.</span>
+              <span className="tx"><b>{t("stack.step1Title")}</b>{t("stack.step1Body")}</span>
             </div>
             <div className="empty-step">
               <span className="n">02</span>
-              <span className="tx"><b>Manager review</b>Socrates routes recommendations for approval.</span>
+              <span className="tx"><b>{t("stack.step2Title")}</b>{t("stack.step2Body")}</span>
             </div>
             <div className="empty-step">
               <span className="n">03</span>
-              <span className="tx"><b>Start using them</b>Approved tools show up here with coaching.</span>
+              <span className="tx"><b>{t("stack.step3Title")}</b>{t("stack.step3Body")}</span>
             </div>
           </div>
           <button
             className="btn btn-soft btn-block"
             onClick={() => openExternal(WEB_APP_URL)}
           >
-            <Icon name="open" /> Open the Socrates web app
+            <Icon name="open" /> {t("stack.openWeb")}
           </button>
         </div>
       </div>
@@ -171,14 +173,14 @@ export default function StackPage({
     <>
       <div className="head">
         <div className="titles">
-          <h1>Your <span className="ital">stack</span></h1>
-          <div className="sub">{recs.length} tools approved for you · ready to use</div>
+          <h1>{t("stack.titleBefore")}<span className="ital">{t("stack.titleAccent")}</span></h1>
+          <div className="sub">{t("stack.approvedCount", { count: recs.length })}</div>
         </div>
         <div className="tools">
           <div className="search">
             <Icon name="search" />
             <input
-              placeholder="Search tools…"
+              placeholder={t("stack.search")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -194,7 +196,7 @@ export default function StackPage({
               className={`pill${activeFilter === f ? " active" : ""}`}
               onClick={() => setActiveFilter(f)}
             >
-              {f}
+              {f === ALL ? t("stack.all") : f}
             </button>
           ))}
         </div>
@@ -214,7 +216,7 @@ export default function StackPage({
                   <div className="nm">{rec.tool_name}</div>
                   <div className="ct">{rec.tool_category}</div>
                 </div>
-                <span className="badge approved"><span className="dot" />Approved</span>
+                <span className="badge approved"><span className="dot" />{t("stack.approved")}</span>
               </div>
               <div className="tool-use">{rec.use_case}</div>
               <div className="tool-actions">
@@ -223,18 +225,18 @@ export default function StackPage({
                     className="btn btn-soft btn-sm"
                     onClick={() => openExternal(rec.tool_url!)}
                   >
-                    <Icon name="open" /> Open
+                    <Icon name="open" /> {t("stack.open")}
                   </button>
                 ) : (
                   <button className="btn btn-soft btn-sm" disabled>
-                    <Icon name="open" /> Open
+                    <Icon name="open" /> {t("stack.open")}
                   </button>
                 )}
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={() => onStartCoaching(rec.tool_name)}
                 >
-                  <Icon name="coach" /> Coach me
+                  <Icon name="coach" /> {t("stack.coachMe")}
                 </button>
               </div>
             </div>

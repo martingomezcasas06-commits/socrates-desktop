@@ -12,6 +12,7 @@ import Icon from "../Icon";
 import { apiFetch } from "../lib/api";
 import VoiceSession from "../components/VoiceSession";
 import RealtimeVoiceSession from "../components/RealtimeVoiceSession";
+import { useT } from "../i18n";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -83,20 +84,13 @@ const API_URL  = import.meta.env.VITE_API_URL as string;
 // tutor advances. A fast tick makes the guidance churn and feel reactive.
 const INTERVAL = 9000;
 
-// Phase shown in the session header — reinforces the "leveling up" feel.
-const LEVEL_LABEL: Record<string, string> = {
-  new: "Getting oriented",
-  learning: "Core skills",
-  confident: "Pro features",
-};
-
-const HOW = [
-  { n: 1, t: "You start a session", d: "Pick a tool. Socrates begins watching your screen — privately." },
-  { n: 2, t: "Guidance, step by step", d: "Follow along with live guidance. Ask anything about what you see." },
-  { n: 3, t: "Stuck? It takes over", d: "With your OK, Socrates navigates the steps for you." },
-];
+// Phase shown in the session header (coaching.levels) — reinforces the "leveling up" feel.
+const LEVELS = ["new", "learning", "confident"] as const;
+type Level = (typeof LEVELS)[number];
+const isLevel = (l: string | null): l is Level => !!l && (LEVELS as readonly string[]).includes(l);
 
 export default function CoachingPage({ session, initialTool }: { session: Session; initialTool: string }) {
+  const { t, m } = useT();
   const [tool, setTool] = useState(initialTool || "");
   const [mode, setMode] = useState<Mode>("idle");
   const [guidance, setGuidance] = useState("");
@@ -132,7 +126,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   const [voiceFallbackReason, setVoiceFallbackReason] = useState("");
 
   function startVoice() {
-    if (!tool.trim()) { setError("Please enter the tool name first."); return; }
+    if (!tool.trim()) { setError(t("coaching.enterTool")); return; }
     setError("");
     setVoiceActive(true);
   }
@@ -156,20 +150,18 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     try {
       const screenshot = await captureScreen();
       if (!screenshot || screenshot.length < 100) {
-        setError(IS_TAURI
-          ? "Couldn't capture your screen. Enable Screen Recording for Socrates in System Settings → Privacy & Security, then restart the app."
-          : "Couldn't capture your screen. Try restarting the session.");
+        setError(IS_TAURI ? t("coaching.captureFailedTauri") : t("coaching.captureFailedBrowser"));
         return;
       }
       setError("");
-      setGuidance((g) => g || "Looking at your screen…");
+      setGuidance((g) => g || t("coaching.looking"));
       const phase = startPhaseRef.current ? "start" : "tick";
       const res = await apiFetch(`${API_URL}/api/coaching/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ screenshot, tool, taught: taughtRef.current.slice(-4), phase }),
       });
-      if (!res.ok) { setError(`Socrates couldn't analyze the screen (HTTP ${res.status}).`); return; }
+      if (!res.ok) { setError(t("coaching.analyzeFailed", { status: res.status })); return; }
       const data: AnalysisResult = await res.json();
       startPhaseRef.current = false; // the session has been counted
       setGuidance(data.guidance);
@@ -181,14 +173,14 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       }
       if (data.stuck && data.offer) setOffer(data.offer);
     } catch (e) {
-      setError(`Connection problem: ${e instanceof Error ? e.message : String(e)}`);
+      setError(t("common.connectionProblem", { detail: e instanceof Error ? e.message : String(e) }));
     } finally {
       analyzingRef.current = false;
     }
-  }, [mode, tool, session.access_token]);
+  }, [mode, tool, session.access_token, t]);
 
   async function startAdvisory() {
-    if (!tool.trim()) { setError("Please enter the tool name first."); return; }
+    if (!tool.trim()) { setError(t("coaching.enterTool")); return; }
     setError("");
     if (IS_TAURI) {
       // Screen Recording permission is required to see your screen. If it's missing,
@@ -197,13 +189,13 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
         const ok = await tauriInvoke<boolean>("screen_recording_allowed");
         if (!ok) {
           await tauriInvoke("request_screen_recording");
-          setError("Socrates needs Screen Recording permission to see your screen. Enable “Socrates” in System Settings ▸ Privacy & Security ▸ Screen Recording, then fully quit and reopen the app.");
+          setError(t("coaching.needScreenRecording"));
           return;
         }
       } catch { /* older build without the check */ }
     }
     if (!IS_TAURI) {
-      if (!navigator.mediaDevices?.getDisplayMedia) { setError("Screen sharing not supported. Use Chrome or Edge."); return; }
+      if (!navigator.mediaDevices?.getDisplayMedia) { setError(t("coaching.shareUnsupported")); return; }
       try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
         streamRef.current = stream;
@@ -213,12 +205,12 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
         stream.getVideoTracks()[0].addEventListener("ended", () => stopSession());
       } catch (err) {
         if (err instanceof Error && err.name === "NotAllowedError") return;
-        setError("Could not share screen. On macOS, enable Screen Recording for your browser in System Settings.");
+        setError(t("coaching.shareFailed"));
         return;
       }
     }
     setMode("advisory");
-    setGuidance(`Great — let's learn ${tool} together. Open it up and I'll give you a quick tour of what everything is, then we'll try it.`);
+    setGuidance(t("coaching.kickoff", { tool }));
     setTryThis(null); taughtRef.current = []; startPhaseRef.current = true; setLevel(null);
     setOffer(null); setSummary(null); setAutonomousLog([]);
     // Become a floating, always-on-top companion so Socrates stays reachable
@@ -229,7 +221,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   async function stopSession() {
     autonomousRef.current = false;
     if (intervalRef.current) clearInterval(intervalRef.current);
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     // Restore the full app window.
@@ -276,7 +268,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
     while (autonomousRef.current) {
       if (log.length >= MAX_AUTONOMOUS_STEPS) {
         autonomousRef.current = false;
-        setSummary("I couldn't finish that on my own, so I've handed control back to you.");
+        setSummary(t("coaching.handBack"));
         setMode("advisory");
         break;
       }
@@ -293,7 +285,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
         setAutonomousLog([...log]);
         if (data.task_complete) {
           autonomousRef.current = false;
-          setSummary(data.summary ?? "Done! Handing control back to you.");
+          setSummary(data.summary ?? t("coaching.doneHandBack"));
           setMode("advisory");
           setGuidance(data.summary ?? "");
           break;
@@ -328,12 +320,12 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
       const res = await apiFetch(`${API_URL}/api/coaching/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ screenshot, tool, question: q, history: qa.filter((t): t is { q: string; a: string } => t.a !== null).slice(-6) }),
+        body: JSON.stringify({ screenshot, tool, question: q, history: qa.filter((turn): turn is { q: string; a: string } => turn.a !== null).slice(-6) }),
       });
       const data: AnalysisResult = await res.json();
       setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: data.guidance, tryThis: data.tryThis ?? null } : item)));
     } catch {
-      setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: "Sorry — couldn't reach Socrates. Try again." } : item)));
+      setQa((prev) => prev.map((item, i) => (i === prev.length - 1 ? { ...item, a: t("coaching.askFailed") } : item)));
     }
     setAsking(false);
   }
@@ -362,10 +354,10 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
   // ── Q&A bar (shared) ──
   const qaBar = (
     <div className="guide-qa">
-      <div className="qa-label">Ask about your screen</div>
+      <div className="qa-label">{t("coaching.askLabel")}</div>
       <form className="qa-input" onSubmit={askQuestion}>
         <Icon name="eye" />
-        <input value={askInput} onChange={(e) => setAskInput(e.target.value)} placeholder="What does this button do?" />
+        <input value={askInput} onChange={(e) => setAskInput(e.target.value)} placeholder={t("coaching.askPlaceholder")} />
         <button type="submit" className="send-sm" disabled={!askInput.trim() || asking}><Icon name="send" /></button>
       </form>
     </div>
@@ -397,9 +389,9 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
 
       {/* sub-tabs */}
       <div className="coach-sub">
-        <button className={`coach-tab${tab === "coaching" ? " active" : ""}`} onClick={() => setTab("coaching")}><Icon name="coach" /> Coaching</button>
-        <button className={`coach-tab${tab === "chat" ? " active" : ""}`} onClick={() => setTab("chat")}><Icon name="chat" /> Chat</button>
-        <button className="tb-btn" style={{ marginLeft: "auto", marginRight: 0 }} onClick={toggleSize} title={expanded ? "Shrink to floating companion" : "Expand"}><Icon name="pop" /></button>
+        <button className={`coach-tab${tab === "coaching" ? " active" : ""}`} onClick={() => setTab("coaching")}><Icon name="coach" /> {t("coaching.tabCoaching")}</button>
+        <button className={`coach-tab${tab === "chat" ? " active" : ""}`} onClick={() => setTab("chat")}><Icon name="chat" /> {t("coaching.tabChat")}</button>
+        <button className="tb-btn" style={{ marginLeft: "auto", marginRight: 0 }} onClick={toggleSize} title={expanded ? t("coaching.shrink") : t("coaching.expand")}><Icon name="pop" /></button>
       </div>
 
       {tab === "chat" ? (
@@ -408,22 +400,22 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
         /* ── IDLE ── */
         <div className="coach-idle anim">
           <div className="start-panel">
-            <h2>Start a <span className="ital">voice call</span> with Socrates</h2>
-            <p>Tell me which tool you want to learn. I&apos;ll hop on a quick call, watch your screen, and walk you through it out loud — just talk to me, no reading.</p>
+            <h2>{t("coaching.startTitleBefore")}<span className="ital">{t("coaching.startTitleAccent")}</span>{t("coaching.startTitleAfter")}</h2>
+            <p>{t("coaching.startBody")}</p>
             <div className="start-row">
-              <input className="field" value={tool} onChange={(e) => setTool(e.target.value)} placeholder="Which tool? (e.g. Claude, ChatGPT, Notion)"
+              <input className="field" value={tool} onChange={(e) => setTool(e.target.value)} placeholder={t("coaching.toolPlaceholder")}
                 onKeyDown={(e) => { if (e.key === "Enter") startVoice(); }} />
-              <button className="btn btn-primary btn-lg" onClick={startVoice}><Icon name="coach" /> Start voice call</button>
+              <button className="btn btn-primary btn-lg" onClick={startVoice}><Icon name="coach" /> {t("coaching.startVoice")}</button>
             </div>
-            <button className="link-quiet" onClick={startAdvisory}>Prefer text? Guide me by text instead →</button>
+            <button className="link-quiet" onClick={startAdvisory}>{t("coaching.preferText")}</button>
           </div>
           {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 12 }}>{error}</div>}
           <div className="panel" style={{ marginTop: 16 }}>
-            <h4><Icon name="help" /> How live coaching works</h4>
+            <h4><Icon name="help" /> {t("coaching.howTitle")}</h4>
             <div className="how-row">
-              {HOW.map((h) => (
-                <div key={h.n} className="how-card">
-                  <div className="n">{h.n}</div>
+              {m.coaching.how.map((h, i) => (
+                <div key={i} className="how-card">
+                  <div className="n">{i + 1}</div>
                   <div className="t">{h.t}</div>
                   <div className="d">{h.d}</div>
                 </div>
@@ -437,8 +429,8 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
           {mode === "autonomous" && (
             <div className="control-banner">
               <div className="control-orb"><Icon name="bolt" /></div>
-              <div className="cb-tx"><div className="t">Socrates is in control</div><div className="d">Navigating {tool || "your tool"} for you · you can stop anytime</div></div>
-              <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> Stop</button>
+              <div className="cb-tx"><div className="t">{t("coaching.inControl")}</div><div className="d">{t("coaching.navigating", { tool: tool || t("coaching.yourTool") })}</div></div>
+              <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> {t("coaching.stop")}</button>
             </div>
           )}
           <div className="coach-live">
@@ -446,10 +438,10 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
             <div className="preview-pane">
               {mode !== "autonomous" && (
                 <div className="preview-status">
-                  <span className="badge live"><span className="dot" />Live · watching</span>
-                  <span className="st-txt">Coaching <span className="dim">·</span> {tool || "your screen"}</span>
+                  <span className="badge live"><span className="dot" />{t("coaching.liveWatching")}</span>
+                  <span className="st-txt">{t("coaching.coachingOn")} <span className="dim">·</span> {tool || t("coaching.yourScreen")}</span>
                   <span className="spacer" />
-                  <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> Stop session</button>
+                  <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> {t("coaching.stopSession")}</button>
                 </div>
               )}
               <div className="preview-frame">
@@ -459,8 +451,8 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
                   <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--ink-faint)", textAlign: "center", padding: 24 }}>
                     <div>
                       <div style={{ display: "grid", placeItems: "center", marginBottom: 12 }}><Icon name="eye" size={30} /></div>
-                      <div style={{ fontSize: 13, color: "var(--ink-dim)" }}>Socrates is watching your screen privately.</div>
-                      <div className="mono" style={{ marginTop: 6 }}>your screen stays on your device</div>
+                      <div style={{ fontSize: 13, color: "var(--ink-dim)" }}>{t("coaching.watchingPrivately")}</div>
+                      <div className="mono" style={{ marginTop: 6 }}>{t("coaching.staysOnDevice")}</div>
                     </div>
                   </div>
                 )}
@@ -471,22 +463,22 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
             <aside className="guide-pane">
               {mode === "autonomous" ? (
                 <>
-                  <div className="guide-head"><Icon name="bolt" /><div className="gh-t">Action log<span className="mono">autonomous mode</span></div></div>
+                  <div className="guide-head"><Icon name="bolt" /><div className="gh-t">{t("coaching.actionLog")}<span className="mono">{t("coaching.autonomousMode")}</span></div></div>
                   <div className="action-log">
                     {autonomousLog.map((a, i) => (
                       <div key={i} className={`log-item${i === autonomousLog.length - 1 ? " cur" : ""}`}>
                         <span className="lx"><Icon name="check" size={13} style={{ display: "inline", verticalAlign: "-2px", color: "var(--green)" }} /> {a}</span>
                       </div>
                     ))}
-                    <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>Working…</div>
+                    <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>{t("coaching.working")}</div>
                   </div>
                   {qaBar}
                 </>
               ) : (
                 <>
-                  <div className="guide-head"><Icon name="target" /><div className="gh-t" style={{ flex: 1, minWidth: 0 }}>Guidance<span className="mono">{tool || "live coaching"}</span></div>
-                    {level && LEVEL_LABEL[level] && <span className={`lvl-badge ${level}`}>{LEVEL_LABEL[level]}</span>}
-                    <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> End session</button>
+                  <div className="guide-head"><Icon name="target" /><div className="gh-t" style={{ flex: 1, minWidth: 0 }}>{t("coaching.guidance")}<span className="mono">{tool || t("coaching.liveCoaching")}</span></div>
+                    {isLevel(level) && <span className={`lvl-badge ${level}`}>{t(`coaching.levels.${level}`)}</span>}
+                    <button className="btn btn-danger btn-sm" onClick={stopSession}><Icon name="stop" /> {t("coaching.endSession")}</button>
                   </div>
                   <div className="guide-feed" ref={guidanceScrollRef}
                     onScroll={(e) => {
@@ -496,28 +488,28 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
                     {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error}</div>}
                     {summary && (
                       <div className="offer-card" style={{ background: "var(--green-soft)", borderColor: "rgba(79,178,134,0.4)" }}>
-                        <div className="oc-top"><div className="oc-ic" style={{ background: "var(--green-soft)", color: "var(--green)" }}><Icon name="check" /></div><h4>Done</h4></div>
+                        <div className="oc-top"><div className="oc-ic" style={{ background: "var(--green-soft)", color: "var(--green)" }}><Icon name="check" /></div><h4>{t("coaching.done")}</h4></div>
                         <p>{summary}</p>
                       </div>
                     )}
-                    <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink)" }}>{guidance || "Analysing your screen…"}</p>
+                    <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--ink)" }}>{guidance || t("coaching.analysing")}</p>
                     {tryThis && <TryThisBox text={tryThis} />}
                     {qa.map((item, i) => (
                       <div key={i} style={{ marginTop: 4 }}>
                         <div style={{ fontSize: 12.5, color: "var(--accent-2)", background: "var(--accent-soft)", borderRadius: "10px 10px 2px 10px", padding: "7px 11px", marginLeft: "auto", width: "fit-content", maxWidth: "90%", lineHeight: 1.45 }}>{item.q}</div>
                         <div style={{ fontSize: 13, color: "var(--ink-dim)", lineHeight: 1.6, marginTop: 6 }}>
-                          {item.a ?? <span style={{ opacity: 0.6, fontStyle: "italic" }}>looking at your screen…</span>}
+                          {item.a ?? <span style={{ opacity: 0.6, fontStyle: "italic" }}>{t("coaching.lookingShort")}</span>}
                         </div>
                         {item.tryThis && <TryThisBox text={item.tryThis} />}
                       </div>
                     ))}
                     {offer && (
                       <div className="offer-card">
-                        <div className="oc-top"><div className="oc-ic"><Icon name="bolt" /></div><h4>Looks like you&apos;re stuck</h4></div>
+                        <div className="oc-top"><div className="oc-ic"><Icon name="bolt" /></div><h4>{t("coaching.stuckTitle")}</h4></div>
                         <p>{offer}</p>
                         <div className="offer-actions">
-                          <button className="btn btn-soft btn-sm" onClick={declineOffer}>No, I&apos;ve got it</button>
-                          <button className="btn btn-primary btn-sm" onClick={acceptOffer}><Icon name="bolt" /> Yes, take over</button>
+                          <button className="btn btn-soft btn-sm" onClick={declineOffer}>{t("coaching.gotIt")}</button>
+                          <button className="btn btn-primary btn-sm" onClick={acceptOffer}><Icon name="bolt" /> {t("coaching.takeOver")}</button>
                         </div>
                       </div>
                     )}
@@ -536,6 +528,7 @@ export default function CoachingPage({ session, initialTool }: { session: Sessio
 /** A copy-paste-ready example the tutor wants the learner to type into the tool.
  *  This is the thing a true beginner needs most — they never face a blank box. */
 function TryThisBox({ text }: { text: string }) {
+  const { t } = useT();
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -547,9 +540,9 @@ function TryThisBox({ text }: { text: string }) {
   return (
     <div className="try-box">
       <div className="try-head">
-        <span className="try-label"><Icon name="sparkle" /> Try typing this</span>
+        <span className="try-label"><Icon name="sparkle" /> {t("coaching.tryTyping")}</span>
         <button className="try-copy" onClick={copy}>
-          <Icon name={copied ? "check" : "copy"} /> {copied ? "Copied" : "Copy"}
+          <Icon name={copied ? "check" : "copy"} /> {copied ? t("common.copied") : t("common.copy")}
         </button>
       </div>
       <div className="try-text">{text}</div>
@@ -562,9 +555,9 @@ type ChatMsg = { role: "user" | "assistant"; content: string };
 
 // No session prop: apiFetch attaches a freshly-minted token per request.
 function CoachingChat({ tool }: { tool: string }) {
-  const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: "assistant", content: "I'm here while you work. Ask me anything about what you're doing." },
-  ]);
+  const { t } = useT();
+  // Greeting rendered from the catalog (follows a language switch), still sent as turn one.
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -577,21 +570,21 @@ function CoachingChat({ tool }: { tool: string }) {
   }, [input]);
 
   async function send() {
-    const t = input.trim();
-    if (!t || busy) return;
+    const text = input.trim();
+    if (!text || busy) return;
     setInput(""); setBusy(true);
-    const next: ChatMsg[] = [...messages, { role: "user", content: t }];
+    const next: ChatMsg[] = [...messages, { role: "user", content: text }];
     setMessages(next);
     try {
       const res = await apiFetch(`${API_URL}/api/chat/employee-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: [{ role: "assistant", content: t("coaching.chatGreeting") }, ...next] }),
       });
       const reply = await res.text();
       setMessages([...next, { role: "assistant", content: reply }]);
     } catch {
-      setMessages([...next, { role: "assistant", content: "Something went wrong. Try again." }]);
+      setMessages([...next, { role: "assistant", content: t("coaching.chatError") }]);
     }
     setBusy(false);
   }
@@ -602,18 +595,22 @@ function CoachingChat({ tool }: { tool: string }) {
   return (
     <div className="chat-main" style={{ flex: 1, minHeight: 0 }}>
       <div className="chat-stream" ref={listRef} style={{ padding: "18px 22px" }}>
+        <div className="msg bot">
+          <div className="av"><Icon name="sparkle" /></div>
+          <div className="bubble">{t("coaching.chatGreeting")}</div>
+        </div>
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role === "user" ? "me" : "bot"}`}>
             <div className="av">{m.role === "user" ? "" : <Icon name="sparkle" />}</div>
             <div className="bubble">{m.content}</div>
           </div>
         ))}
-        {busy && <div className="dim" style={{ fontSize: 12, fontStyle: "italic", paddingLeft: 6 }}>thinking…</div>}
+        {busy && <div className="dim" style={{ fontSize: 12, fontStyle: "italic", paddingLeft: 6 }}>{t("common.thinking")}</div>}
       </div>
       <div className="chat-foot" style={{ padding: "0 22px 18px" }}>
         <div className="composer">
           <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKey} rows={1}
-            placeholder={tool ? `Ask about ${tool}…` : "Ask anything…"} />
+            placeholder={tool ? t("coaching.askAbout", { tool }) : t("coaching.askAnything")} />
           <button className="send" onClick={send} disabled={!input.trim() || busy}><Icon name="send" /></button>
         </div>
       </div>

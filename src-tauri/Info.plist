@@ -5,6 +5,17 @@
   <!-- Required so macOS lets the app use the microphone for hands-free voice coaching.
        Without this key, accessing the mic crashes the app. Signed (hardened runtime)
        builds also need the audio-input entitlement in Entitlements.plist. -->
+  <!-- The app ships English and Spanish. Declaring both (plus the en.lproj / es.lproj
+       InfoPlist.strings copied in by bundle.macOS.files) lets macOS show the mic prompt
+       in Spanish, and makes the webview report a Spanish navigator.language to a
+       Spanish-language Mac instead of the English default. -->
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>es</string>
+  </array>
   <key>NSMicrophoneUsageDescription</key>
   <string>Socrates listens during a voice coaching call so you can talk to it out loud instead of typing.</string>
 </dict>

@@ -415,6 +415,54 @@ fn save_capture_probe(app: AppHandle) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Tray strings per UI language: (open, show/hide, quit, tooltip). The webview
+/// owns the language choice and calls `set_tray_language` whenever it changes;
+/// until then (first paint of the very first launch) the tray is English.
+fn tray_labels(locale: &str) -> (&'static str, &'static str, &'static str, &'static str) {
+    if locale.to_ascii_lowercase().starts_with("es") {
+        (
+            "Abrir Socrates",
+            "Mostrar / ocultar asistente",
+            "Salir de Socrates",
+            "Socrates: haz clic para abrir tu coach",
+        )
+    } else {
+        (
+            "Open Socrates",
+            "Show / Hide companion",
+            "Quit Socrates",
+            "Socrates — click to open your coach",
+        )
+    }
+}
+
+/// The tray menu in a given language. Item ids stay the same across languages,
+/// so the menu-event handler registered at startup keeps working after a swap.
+fn tray_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: &str) -> tauri::Result<Menu<R>> {
+    let (open_l, toggle_l, quit_l, _) = tray_labels(locale);
+    // "Open" is not a duplicate of "toggle": toggle shows the small floating
+    // companion, whereas Open restores the full 980x700 window. Without it, a
+    // Windows user who closes the window has no way back except the tray icon —
+    // which Windows 11 hides in the overflow flyout by default.
+    let open = MenuItem::with_id(app, "open", open_l, true, None::<&str>)?;
+    let toggle = MenuItem::with_id(app, "toggle", toggle_l, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", quit_l, true, None::<&str>)?;
+    Menu::with_items(app, &[&open, &toggle, &quit])
+}
+
+/// Relabel the tray menu and tooltip in the UI's language ("en" / "es").
+#[tauri::command]
+fn set_tray_language(app: AppHandle, locale: String) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("socrates-tray")
+        .ok_or_else(|| "tray not found".to_string())?;
+    let menu = tray_menu(&app, &locale).map_err(|e| e.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    tray.set_tooltip(Some(tray_labels(&locale).3))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Park the companion window top-right, just under the menu bar, near the tray icon.
 /// Horizontally centred on the click point when we have one; clamped to the screen.
 fn position_companion(win: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>) {
@@ -531,7 +579,8 @@ pub fn run() {
             debug_log,
             realtime_sdp,
             request_screen_recording,
-            save_capture_probe
+            save_capture_probe,
+            set_tray_language
         ])
         .on_window_event(|window, event| {
             // Red close button: don't DESTROY the window (that left the app running
@@ -572,14 +621,9 @@ pub fn run() {
             }
 
             // Menu-bar (tray) companion — always reachable, even over fullscreen apps.
-            // "Open" is not a duplicate of "toggle": toggle shows the small floating
-            // companion, whereas Open restores the full 980x700 window. Without it, a
-            // Windows user who closes the window has no way back except the tray icon —
-            // which Windows 11 hides in the overflow flyout by default.
-            let open = MenuItem::with_id(app, "open", "Open Socrates", true, None::<&str>)?;
-            let toggle = MenuItem::with_id(app, "toggle", "Show / Hide companion", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Socrates", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &toggle, &quit])?;
+            // Built in English; the webview relabels it via set_tray_language as soon
+            // as it knows the UI language (from its cache, before the first paint).
+            let menu = tray_menu(app, "en")?;
 
             // macOS menu-bar icons are monochrome templates the OS inverts for light/dark.
             // Windows taskbars are dark by default, so that same black glyph is invisible —
@@ -591,7 +635,7 @@ pub fn run() {
 
             let tray = TrayIconBuilder::with_id("socrates-tray")
                 .icon(icon)
-                .tooltip("Socrates — click to open your coach")
+                .tooltip(tray_labels("en").3)
                 .menu(&menu)
                 .show_menu_on_left_click(false);
 
@@ -635,6 +679,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_labels_follow_the_ui_language() {
+        assert_eq!(tray_labels("es").0, "Abrir Socrates");
+        assert_eq!(tray_labels("es-CO").2, "Salir de Socrates");
+        assert_eq!(tray_labels("en").0, "Open Socrates");
+        // Anything unsupported falls back to English rather than failing.
+        assert_eq!(tray_labels("fr").2, "Quit Socrates");
+    }
 
     /// Where a click the model aims at the centre of the screenshot actually lands.
     fn centre_lands_at(w: u32, h: u32, scale: f32) -> (f32, f32) {

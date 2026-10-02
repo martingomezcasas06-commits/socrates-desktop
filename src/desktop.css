@@ -203,6 +203,14 @@
   .rail-user .out { color: var(--ink-faint); width: 16px; height: 16px; flex-shrink: 0; }
   .rail-user .out:hover { color: var(--ink); }
 
+  /* EN / ES toggle: a two-pill segmented control in the mono label voice. */
+  .lang-switch { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--rule); }
+  .lang-switch button { height: 22px; min-width: 30px; padding: 0 8px; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--ink-faint); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; transition: background .16s, color .16s; }
+  .lang-switch button:hover { color: var(--ink); }
+  .lang-switch button.active { background: var(--accent-soft); color: var(--ink); }
+  .rail-lang { margin: 0 8px 8px; }
+  .login-lang { position: absolute; top: 16px; right: 16px; z-index: 2; }
+
   /* ════ CONTENT ════ */
   .content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
   .scroll { flex: 1; overflow-y: auto; min-height: 0; }

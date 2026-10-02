@@ -11,8 +11,13 @@ import ChatPage from "./pages/ChatPage";
 import CoachingPage from "./pages/CoachingPage";
 import Icon from "./Icon";
 import { checkAndInstall, restartIntoUpdate, type UpdateState } from "./lib/updates";
+import { LocaleProvider, LanguageSwitch, useT } from "./i18n";
+import type { MessageKey } from "./i18n/en";
 
 export type Page = "stack" | "chat" | "coaching";
+
+/** A deep-link failure, kept untranslated so a language switch re-renders it. */
+type LinkError = { key: MessageKey; vars?: Record<string, string> } | null;
 
 function initialsOf(s: string): string {
   const base = s.includes("@") ? s.split("@")[0].replace(/[._-]/g, " ") : s;
@@ -35,7 +40,7 @@ export default function App() {
   const [recovering, setRecovering]   = useState(false); // PASSWORD_RECOVERY flow
   const [page, setPage]               = useState<Page>("stack");
   const [coachingTool, setCoachingTool] = useState<string>("");
-  const [deepLinkError, setDeepLinkError] = useState<string>("");
+  const [deepLinkError, setDeepLinkError] = useState<LinkError>(null);
   const [deepLinkRaw, setDeepLinkRaw]     = useState<string>("");
   const [update, setUpdate]               = useState<UpdateState>({ status: "idle" });
 
@@ -78,26 +83,26 @@ export default function App() {
       setDeepLinkRaw(url ?? "(empty)");   // show immediately — synchronous
       const link = parseAuthLink(url);
       switch (link.kind) {
-        case "empty": setDeepLinkError("Deep link fired but URL was empty"); return;
-        case "error": setDeepLinkError(`OAuth error: ${link.message}`); return;
-        case "no-code": setDeepLinkError(`No code in URL: ${link.url}`); return;
-        case "unparseable": setDeepLinkError(`Parse error: ${link.reason} — raw URL: ${link.url}`); return;
+        case "empty": setDeepLinkError({ key: "deepLink.empty" }); return;
+        case "error": setDeepLinkError({ key: "deepLink.oauthError", vars: { message: link.message } }); return;
+        case "no-code": setDeepLinkError({ key: "deepLink.noCode", vars: { url: link.url } }); return;
+        case "unparseable": setDeepLinkError({ key: "deepLink.parseError", vars: { reason: link.reason, url: link.url } }); return;
         case "code":
           if (!firstTimeForCode(link.code)) return;
           supabase.auth.exchangeCodeForSession(link.code)
             .then(({ error }) => {
-              if (error) setDeepLinkError(`Exchange failed: ${error.message}`);
+              if (error) setDeepLinkError({ key: "deepLink.exchangeFailed", vars: { message: error.message } });
             })
-            .catch((e) => setDeepLinkError(`Exchange threw: ${String(e)}`));
+            .catch((e) => setDeepLinkError({ key: "deepLink.exchangeThrew", vars: { message: String(e) } }));
       }
     };
 
     getCurrent()
       .then((urls) => { if (urls?.length) handleAuthUrl(urls[0]); })
-      .catch((e) => setDeepLinkError(`getCurrent failed: ${String(e)}`));
+      .catch((e) => setDeepLinkError({ key: "deepLink.getCurrentFailed", vars: { message: String(e) } }));
 
     const unlisten = onOpenUrl((urls) => handleAuthUrl(urls[0]))
-      .catch((e) => { setDeepLinkError(`onOpenUrl setup failed: ${String(e)}`); return undefined; });
+      .catch((e) => { setDeepLinkError({ key: "deepLink.onOpenUrlFailed", vars: { message: String(e) } }); return undefined; });
 
     return () => {
       subscription.unsubscribe();
@@ -110,19 +115,42 @@ export default function App() {
     setPage("coaching");
   }
 
-  if (loading) {
-    return (
-      <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "var(--bg)" }}>
-        <span className="brand-mark" style={{ width: 40, height: 40 }} />
-      </div>
-    );
-  }
+  return (
+    <LocaleProvider signedIn={!!session}>
+      {loading ? (
+        <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "var(--bg)" }}>
+          <span className="brand-mark" style={{ width: 40, height: 40 }} />
+        </div>
+      ) : !session ? (
+        <SignedOut deepLinkError={deepLinkError} deepLinkRaw={deepLinkRaw} />
+      ) : recovering ? (
+        // Password-reset deep link was clicked — show the set-new-password screen
+        <ResetPasswordPage />
+      ) : (
+        <Shell
+          session={session} page={page} setPage={setPage} update={update}
+          coachingTool={coachingTool} onStartCoaching={startCoaching}
+        />
+      )}
+    </LocaleProvider>
+  );
+}
 
-  if (!session) return <AuthPage deepLinkError={deepLinkError} deepLinkRaw={deepLinkRaw} />;
+function SignedOut({ deepLinkError, deepLinkRaw }: { deepLinkError: LinkError; deepLinkRaw: string }) {
+  const { t } = useT();
+  return (
+    <AuthPage
+      deepLinkError={deepLinkError ? t(deepLinkError.key, deepLinkError.vars) : ""}
+      deepLinkRaw={deepLinkRaw}
+    />
+  );
+}
 
-  // Password-reset deep link was clicked — show the set-new-password screen
-  if (recovering) return <ResetPasswordPage />;
-
+function Shell({ session, page, setPage, update, coachingTool, onStartCoaching }: {
+  session: Session; page: Page; setPage: (p: Page) => void; update: UpdateState;
+  coachingTool: string; onStartCoaching: (tool: string) => void;
+}) {
+  const { t } = useT();
   const email = session.user.email ?? "";
   const name = (session.user.user_metadata?.name as string) || displayName(email);
 
@@ -131,26 +159,27 @@ export default function App() {
       <UpdateBar state={update} />
       <aside className="rail">
         <div className="rail-brand"><span className="brand-mark" /><span className="nm">Socrates</span></div>
-        <div className="rail-section"><span>Workspace</span></div>
+        <div className="rail-section"><span>{t("rail.workspace")}</span></div>
         <nav className="rail-nav">
-          <RailLink id="stack" label="Stack" icon="stack" page={page} onNav={setPage} />
-          <RailLink id="chat" label="Chat" icon="chat" page={page} onNav={setPage} />
-          <RailLink id="coaching" label="Coaching" icon="coach" page={page} onNav={setPage} pip={page !== "coaching"} />
+          <RailLink id="stack" label={t("rail.stack")} icon="stack" page={page} onNav={setPage} />
+          <RailLink id="chat" label={t("rail.chat")} icon="chat" page={page} onNav={setPage} />
+          <RailLink id="coaching" label={t("rail.coaching")} icon="coach" page={page} onNav={setPage} pip={page !== "coaching"} />
         </nav>
         <div className="rail-foot">
+          <LanguageSwitch className="rail-lang" />
           <div className="rail-user">
             <div className="avatar">{initialsOf(name || email)}</div>
             <div className="meta">
               <div className="nm">{name}</div>
               <div className="rl">{email}</div>
             </div>
-            <button className="out" onClick={() => supabase.auth.signOut()} title="Sign out"><Icon name="logout" /></button>
+            <button className="out" onClick={() => supabase.auth.signOut()} title={t("rail.signOut")}><Icon name="logout" /></button>
           </div>
         </div>
       </aside>
 
       <div className="content">
-        {page === "stack" && <StackPage session={session} onStartCoaching={startCoaching} />}
+        {page === "stack" && <StackPage session={session} onStartCoaching={onStartCoaching} />}
         {page === "chat" && <ChatPage session={session} />}
         {page === "coaching" && <CoachingPage session={session} initialTool={coachingTool} />}
       </div>
@@ -161,6 +190,7 @@ export default function App() {
 /** Slim strip shown only while an update is downloading or waiting to be applied.
  *  Inline styles on purpose: this must survive the app restyle untouched. */
 function UpdateBar({ state }: { state: UpdateState }) {
+  const { t } = useT();
   if (state.status === "idle" || state.status === "error") return null;
   const bar: CSSProperties = {
     position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
@@ -169,11 +199,11 @@ function UpdateBar({ state }: { state: UpdateState }) {
     background: "#15637F", color: "#fff",
   };
   if (state.status === "downloading") {
-    return <div style={bar}>Downloading update {state.version} — {state.percent}%</div>;
+    return <div style={bar}>{t("update.downloading", { version: state.version, percent: state.percent })}</div>;
   }
   return (
     <div style={bar}>
-      <span>Update {state.version} is ready.</span>
+      <span>{t("update.ready", { version: state.version })}</span>
       <button
         onClick={() => { void restartIntoUpdate(); }}
         style={{
@@ -181,7 +211,7 @@ function UpdateBar({ state }: { state: UpdateState }) {
           padding: "3px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
         }}
       >
-        Restart now
+        {t("update.restart")}
       </button>
     </div>
   );

@@ -14,8 +14,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Icon from "../Icon";
 import { vlog } from "../lib/vlog";
-import { freshToken } from "../lib/api";
+import { freshToken, localeHeader } from "../lib/api";
 import { useSmoothText } from "../lib/useSmoothText";
+import { useT } from "../i18n";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -97,13 +98,6 @@ export async function captureScreen(maxSide?: number, quality?: number): Promise
 type Turn = { role: "user" | "assistant"; content: string };
 type Status = "connecting" | "speaking" | "listening" | "thinking";
 
-const STATUS_LABEL: Record<Status, string> = {
-  connecting: "Connecting",
-  speaking: "Speaking",
-  listening: "Listening",
-  thinking: "Thinking",
-};
-
 // No session prop: every request mints its own fresh token via lib/api.
 export default function VoiceSession({
   tool,
@@ -114,6 +108,11 @@ export default function VoiceSession({
   onEnd: () => void;
   fallbackReason?: string;
 }) {
+  const { t } = useT();
+  // Callbacks below outlive a render (the mount effect keeps the first ones), so
+  // they read the translator through a ref and follow a mid-call language switch.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [status, setStatus] = useState<Status>("connecting");
   const [caption, setCaption] = useState("");      // last thing Socrates said
   const [reveal, setReveal] = useState(0);          // # of caption words shown (live, synced to speech)
@@ -171,7 +170,7 @@ export default function VoiceSession({
 
   // Ask for a token per request — the session prop is captured at login and
   // goes stale after an hour, which 401'd the whole app.
-  const authHeaders = useCallback(async () => ({ Authorization: `Bearer ${await freshToken()}` }), []);
+  const authHeaders = useCallback(async () => ({ ...localeHeader(), Authorization: `Bearer ${await freshToken()}` }), []);
 
   // Speak a reply, then return to listening. Interruptible via stopSpeaking().
   const speak = useCallback(async (text: string) => {
@@ -187,7 +186,7 @@ export default function VoiceSession({
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ text: clean }),
       });
-      if (!res.ok) { setError("Couldn't generate speech."); setReveal(words.length); setStatusBoth("listening"); return; }
+      if (!res.ok) { setError(tRef.current("voice.speechFailed")); setReveal(words.length); setStatusBoth("listening"); return; }
       const buf = await res.arrayBuffer();
       if (!aliveRef.current) return;
       const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
@@ -245,7 +244,7 @@ export default function VoiceSession({
         body: JSON.stringify({ messages: historyRef.current.slice(-12), screenshot, tool, taught: taughtRef.current.slice(-6), phase }),
       });
       if (!res.ok) {
-        setError(res.status === 503 ? "Voice isn't switched on yet (server needs the OpenAI key)." : `Socrates couldn't respond (HTTP ${res.status}).`);
+        setError(res.status === 503 ? tRef.current("voice.notSwitchedOn") : tRef.current("voice.noResponse", { status: res.status }));
         setStatusBoth("listening"); busyRef.current = false; return;
       }
       const data = await res.json() as { reply: string; level?: string };
@@ -259,7 +258,7 @@ export default function VoiceSession({
         setStatusBoth("listening");
       }
     } catch (e) {
-      setError(`Connection problem: ${e instanceof Error ? e.message : String(e)}`);
+      setError(tRef.current("common.connectionProblem", { detail: e instanceof Error ? e.message : String(e) }));
       setStatusBoth("listening");
     } finally {
       busyRef.current = false;
@@ -375,9 +374,7 @@ export default function VoiceSession({
         analyserRef.current = analyser;
         rafRef.current = requestAnimationFrame(tick);
       } catch (e) {
-        setError(IS_TAURI
-          ? "I couldn't reach your microphone. Allow microphone access for Socrates in System Settings ▸ Privacy & Security ▸ Microphone, then restart the app."
-          : "I couldn't reach your microphone. Allow mic access and try again.");
+        setError(IS_TAURI ? tRef.current("voice.micTauri") : tRef.current("voice.micBrowser"));
         setStatusBoth("listening");
         return;
       }
@@ -388,7 +385,7 @@ export default function VoiceSession({
           const ok = await tauriInvoke<boolean>("screen_recording_allowed");
           if (!ok) {
             try { await tauriInvoke("request_screen_recording"); } catch { /* noop */ }
-            setWarn("I can't see your screen yet — turn on Screen Recording for Socrates in System Settings ▸ Privacy & Security, then quit and reopen.");
+            setWarn(tRef.current("voice.screenWarnClassic"));
           }
         } catch { /* older build without the check */ }
       }
@@ -431,11 +428,11 @@ export default function VoiceSession({
   // Type instead of talking (works alongside the live mic).
   async function sendTyped(e: React.FormEvent) {
     e.preventDefault();
-    const t = typed.trim();
-    if (!t || busyRef.current) return;
-    setTyped(""); setYouSaid(t);
+    const text = typed.trim();
+    if (!text || busyRef.current) return;
+    setTyped(""); setYouSaid(text);
     setCaption(""); setReveal(0);
-    pushTurn({ role: "user", content: t });
+    pushTurn({ role: "user", content: text });
     await takeTurn("turn");
   }
 
@@ -466,28 +463,28 @@ export default function VoiceSession({
     <>
       <span className={`vo-dot ${status}`} />
       <span className="vo-status">
-        <span className="vo-status-text">{STATUS_LABEL[status]}</span>
-        {level && <span className="vo-lvl">{level === "new" ? "intro" : level === "learning" ? "core" : "pro"}</span>}
+        <span className="vo-status-text">{t(`voice.status.${status}`)}</span>
+        {level && <span className="vo-lvl">{t(level === "new" ? "voice.levelShort.new" : level === "learning" ? "voice.levelShort.learning" : "voice.levelShort.confident")}</span>}
         {/* This engine only runs when the realtime call couldn't connect. Say so —
             a silent downgrade made a broken call look like a broken product. */}
         <span
           className="vo-lvl vo-lvl-warn"
           title={
             fallbackReason
-              ? `Realtime voice unavailable — using the classic engine.\n${fallbackReason}`
-              : "Realtime voice unavailable — using the classic engine"
+              ? `${t("voice.classicTitle")}.\n${fallbackReason}`
+              : t("voice.classicTitle")
           }
         >
-          classic
+          {t("voice.classic")}
         </span>
       </span>
-      <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
+      <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? t("voice.unmute") : t("voice.mute")}>
         <Icon name={muted ? "eye" : "coach"} />
       </button>
-      <button className="vo-btn" onClick={toggleExpand} title={expanded ? "Shrink to orb" : "Open chat"}>
+      <button className="vo-btn" onClick={toggleExpand} title={expanded ? t("voice.shrinkOrb") : t("voice.openChat")}>
         <Icon name={expanded ? "pop" : "chat"} />
       </button>
-      <button className="vo-btn end" onClick={end} title="End call"><Icon name="stop" /></button>
+      <button className="vo-btn end" onClick={end} title={t("voice.endCall")}><Icon name="stop" /></button>
     </>
   );
 
@@ -497,14 +494,14 @@ export default function VoiceSession({
         <div className="ve-head">{statusHead}</div>
         <div className="ve-feed" ref={feedRef}>
           {warn && <div className="vo-warn" style={{ marginBottom: 8 }}>{warn}</div>}
-          {transcript.length === 0 && !error && <div className="ve-empty">Your conversation shows up here. Talk to me, or type below.</div>}
+          {transcript.length === 0 && !error && <div className="ve-empty">{t("voice.emptyFeed")}</div>}
           {transcript.map((m, i) => (
             <div key={i} className={`ve-msg ${m.role}`}>{m.content}</div>
           ))}
           {error && <div className="ve-err">{error}</div>}
         </div>
         <form className="ve-input" onSubmit={sendTyped}>
-          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Type instead of talking…" />
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={t("voice.typePlaceholder")} />
           <button type="submit" className="send-sm" disabled={!typed.trim()}><Icon name="send" /></button>
         </form>
       </div>
@@ -523,7 +520,7 @@ export default function VoiceSession({
       ) : (
         <div className="vo-cap vo-cap-soft">
           <p className="vo-cap-line">
-            {status === "connecting" ? "Starting your call…" : youSaid ? `“${youSaid}”` : "Say hi, or ask me anything."}
+            {status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi")}
           </p>
         </div>
       )}

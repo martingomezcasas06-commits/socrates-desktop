@@ -12,6 +12,17 @@
  * Rule: never pass a token around. Ask for one at the moment of the request.
  */
 import { supabase } from "./supabase";
+import { getLocale } from "../i18n/core";
+
+/**
+ * The UI language, on every request to our API. The server uses it when the
+ * user's stored locale isn't available, so AI replies follow the app's language.
+ * Needs `X-Socrates-Locale` in desktopCors' Access-Control-Allow-Headers
+ * (app/lib/auth.ts): without it WKWebView fails EVERY preflight.
+ */
+export function localeHeader(): Record<string, string> {
+  return { "X-Socrates-Locale": getLocale() };
+}
 
 /** A token good for at least the next minute, refreshing if needed. */
 export async function freshToken(): Promise<string> {
@@ -36,7 +47,10 @@ export async function freshToken(): Promise<string> {
  */
 export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const send = async (token: string) =>
-    fetch(url, { ...init, headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` } });
+    fetch(url, {
+      ...init,
+      headers: { ...(init.headers || {}), ...localeHeader(), Authorization: `Bearer ${token}` },
+    });
 
   let res = await send(await freshToken());
   if (res.status !== 401) return res;
