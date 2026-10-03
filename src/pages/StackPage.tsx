@@ -32,6 +32,9 @@ type Rec = {
   estimated_impact: "high" | "medium" | "low";
 };
 
+/** Per-language text (migration 019): { en: {...}, es: {...} }. Missing = show the original. */
+type Translations = Record<string, Partial<Pick<Rec, "tool_category" | "use_case">> | undefined>;
+
 /** Stable per-tool gradient derived from the tool name (real tools have no brand colors). */
 function toolHue(name: string): number {
   let h = 0;
@@ -50,8 +53,9 @@ export default function StackPage({
   session: Session;
   onStartCoaching: (tool: string) => void;
 }) {
-  const { t } = useT();
-  const [recs, setRecs] = useState<Rec[]>([]);
+  const { t, locale } = useT();
+  const [rawRecs, setRawRecs] = useState<Rec[]>([]);
+  const [translations, setTranslations] = useState<Record<string, Translations | null>>({});
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   // ALL is a sentinel, not a label: a category could be called "All" / "Todas".
@@ -84,14 +88,33 @@ export default function StackPage({
         .eq("status", "approved")
         .order("estimated_impact", { ascending: false });
 
-      setRecs((data ?? []) as Rec[]);
+      const rows = (data ?? []) as Rec[];
+      setRawRecs(rows);
       setLoading(false);
+
+      // Separate query, so the list still loads where migration 019 isn't applied.
+      if (rows.length) {
+        const { data: tr, error } = await supabase
+          .from("recommendations")
+          .select("id, translations")
+          .in("id", rows.map((r) => r.id));
+        if (!error && tr) setTranslations(Object.fromEntries(tr.map((x) => [x.id as string, x.translations as Translations | null])));
+      }
     }
     // session.access_token is available for any authed backend fetch (matches ChatPage pattern):
     //   Authorization: `Bearer ${session.access_token}`
     void session;
     load();
   }, [session]);
+
+  // The text in the current language, where a translation exists.
+  const recs = useMemo(() => rawRecs.map((r) => {
+    const tr = translations[r.id]?.[locale];
+    return tr ? { ...r, tool_category: tr.tool_category || r.tool_category, use_case: tr.use_case || r.use_case } : r;
+  }), [rawRecs, translations, locale]);
+
+  // Category names change with the language, so a selected one would match nothing.
+  useEffect(() => setActiveFilter(ALL), [locale]);
 
   // Static-ish pill filters: "All" plus the first few distinct categories from the user's stack.
   const filters = useMemo(() => {
