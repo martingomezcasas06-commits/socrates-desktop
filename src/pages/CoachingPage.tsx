@@ -30,7 +30,6 @@ export default function CoachingPage({ session, requested }: { session: Session;
   const { t } = useT();
   const { data, reload } = useOverview();
   const [stage, setStage] = useState<Stage>(requested ? { kind: "consent", tool: requested } : { kind: "list", ended: false });
-  const [needPermission, setNeedPermission] = useState(false);
   const [fallback, setFallback] = useState<string | null>(null);
 
   function ended() {
@@ -40,19 +39,17 @@ export default function CoachingPage({ session, requested }: { session: Session;
   }
 
   async function allow(tool: ApprovedTool) {
-    // macOS never prompts on its own and silently hands back only the wallpaper,
-    // so check first and send the person to System Settings if it's off.
+    // Never block the call on this check. macOS answers it once per process and
+    // a rebuilt app's old grant still looks enabled in System Settings, so a
+    // "no" here can be wrong. Ask (which registers the app and opens Settings
+    // when needed) and start anyway: the call runs audio-only, says so on the
+    // strip, and picks the screen up as soon as permission arrives.
     if (IS_TAURI) {
       try {
         const ok = await tauriInvoke<boolean>("screen_recording_allowed");
-        if (!ok) {
-          await tauriInvoke("request_screen_recording");
-          setNeedPermission(true);
-          return;
-        }
+        if (!ok) await tauriInvoke("request_screen_recording");
       } catch (e) { vlog("CONSENT: permission check unavailable: " + String(e)); }
     }
-    setNeedPermission(false);
     setStage({ kind: "call", tool });
   }
 
@@ -87,10 +84,9 @@ export default function CoachingPage({ session, requested }: { session: Session;
           <dt>{t("consent.keepsLabel")}</dt><dd>{t("consent.keeps")}</dd>
           <dt>{t("consent.stopsLabel")}</dt><dd>{t("consent.stops")}</dd>
         </dl>
-        {needPermission && <div className="warnbox">{t("consent.needPermission")}</div>}
         <div className="acts">
           <button className="nbtn go" onClick={() => void allow(tool)}>{t("consent.allow")}</button>
-          <button className="nbtn gh" onClick={() => { setNeedPermission(false); setStage({ kind: "list", ended: false }); }}>{t("consent.notNow")}</button>
+          <button className="nbtn gh" onClick={() => setStage({ kind: "list", ended: false })}>{t("consent.notNow")}</button>
         </div>
         <p className="fine">{t("consent.askedAgain")}</p>
         <button className="linkq" onClick={() => setStage({ kind: "text", tool })}>{t("sessions.textMode")}</button>

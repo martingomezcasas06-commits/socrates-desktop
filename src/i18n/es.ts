@@ -284,7 +284,6 @@ export const es: Messages = {
     allow: "Permitir y empezar",
     notNow: "Ahora no",
     askedAgain: "Te lo volveremos a preguntar en la próxima sesión.",
-    needPermission: "La grabación de pantalla está desactivada para Socrates. Actívala en Ajustes del Sistema ▸ Privacidad y seguridad ▸ Grabación de pantalla y audio del sistema, y luego cierra y vuelve a abrir Socrates.",
   },
   history: {
     eyebrow: "Ya hechas",

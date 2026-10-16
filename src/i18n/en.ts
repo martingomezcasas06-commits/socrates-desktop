@@ -287,7 +287,6 @@ export const en = {
     allow: "Allow and start",
     notNow: "Not this time",
     askedAgain: "You'll be asked again next session.",
-    needPermission: "Screen Recording is off for Socrates. Turn it on in System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording, then quit and reopen Socrates.",
   },
   history: {
     eyebrow: "Behind you",
