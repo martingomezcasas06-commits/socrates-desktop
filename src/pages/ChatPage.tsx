@@ -1,206 +1,64 @@
-import { useEffect, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabase";
-import Icon from "../Icon";
-import ToolLogo from "../components/ToolLogo";
-import { apiFetch } from "../lib/api";
+/**
+ * One chat with Socrates. A new chat shows the empty state; the first message
+ * creates the conversation (lib/chats.ts) and the thread takes over, with the
+ * ask box pinned to the bottom.
+ */
+import { useEffect, useRef } from "react";
 import { useT } from "../i18n";
+import { appendMessage, requestReply, useChats, useReplyState } from "../lib/chats";
+import type { ApprovedTool } from "../lib/overview";
+import { AskBox } from "./HomePage";
 
-type Message = { role: "user" | "assistant"; content: string };
+export default function ChatPage({ owner, chatId, onAsk, onStartCoaching }: {
+  owner: string;
+  chatId: string | null;
+  onAsk: (text: string) => void;
+  onStartCoaching: (tool: ApprovedTool) => void;
+}) {
+  const { t, m } = useT();
+  const chats = useChats(owner);
+  const chat = chatId ? chats.find((c) => c.id === chatId) ?? null : null;
+  const { busy, failure } = useReplyState(chatId);
+  const endRef = useRef<HTMLDivElement>(null);
 
-const API_URL = import.meta.env.VITE_API_URL as string;
+  useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [chat?.messages.length, busy]);
 
-const TOOL_GRADIENTS = [
-  ["#15637F", "#8FD4E8"],
-  ["#10b981", "#059669"],
-  ["#f59e0b", "#ef4444"],
-  ["#3b82f6", "#06b6d4"],
-];
-
-function initialsOf(s: string): string {
-  const base = s.includes("@") ? s.split("@")[0].replace(/[._-]/g, " ") : s;
-  const p = base.trim().split(/\s+/);
-  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "S";
-}
-
-export default function ChatPage({ session }: { session: Session }) {
-  const { t, m: msgs } = useT();
-  // The greeting is rendered from the catalog rather than stored, so it follows
-  // a language switch. It is still sent as the first turn, as it always was.
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [tools, setTools] = useState<string[]>([]);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  const initials = initialsOf(session.user?.email ?? "");
-
-  useEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages, busy]);
-
-  useEffect(() => {
-    async function loadTools() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: profile } = await supabase
-        .from("users")
-        .select("id")
-        .eq("auth_id", user.id)
-        .single();
-      if (!profile) return;
-      const { data } = await supabase
-        .from("recommendations")
-        .select("tool_name")
-        .eq("user_id", profile.id)
-        .eq("status", "approved")
-        .limit(4);
-      if (data) setTools((data as { tool_name: string }[]).map((r) => r.tool_name));
-    }
-    loadTools();
-  }, []);
-
-  async function sendText(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
-    setInput("");
-    setBusy(true);
-
-    const next: Message[] = [...messages, { role: "user", content: trimmed }];
-    setMessages(next);
-
-    try {
-      const res = await apiFetch(`${API_URL}/api/chat/employee-chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: [{ role: "assistant", content: t("chat.greeting") }, ...next]
-            .map((m) => ({ role: m.role, content: m.content })),
-        }),
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}: ${body || res.statusText}`);
-      }
-
-      const reply = await res.text();
-      setMessages([...next, { role: "assistant", content: reply }]);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      setMessages([...next, { role: "assistant", content: t("chat.error", { detail }) }]);
-    }
-
-    setBusy(false);
+  function send(text: string) {
+    if (!chat) { onAsk(text); return; }
+    appendMessage(owner, chat.id, { role: "user", content: text });
+    void requestReply(owner, chat.id);
   }
 
-  function send(e: React.FormEvent) {
-    e.preventDefault();
-    void sendText(input);
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void sendText(input);
-    }
+  if (!chat) {
+    return (
+      <div className="chat-empty">
+        <h1 className="hello"><img src="/socrates-logo.svg" alt="" />{t("thread.emptyTitle")}</h1>
+        <p className="sub">{t("thread.emptySub")}</p>
+        <AskBox onAsk={send} onStartCoaching={onStartCoaching} autoFocus />
+        <div className="sug">
+          {m.chat.suggest.map((s) => (
+            <button key={s} onClick={() => send(s)}><small>{t("thread.ask")}</small><span>{s}</span></button>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <>
-      <div className="head">
-        <div className="titles">
-          <h1>{t("chat.titleBefore")}<span className="ital">{t("chat.titleAccent")}</span></h1>
-          <div className="sub">{t("chat.sub")}</div>
-        </div>
+    <div className="chat-live">
+      <div className="thread">
+        {chat.messages.map((msg, i) => msg.role === "user" ? (
+          <div key={i} className="tmsg u">{msg.content}</div>
+        ) : (
+          <div key={i} className="tmsg a"><img src="/socrates-logo.svg" alt="" /><div>{msg.content}</div></div>
+        ))}
+        {busy && <div className="tmsg a pending"><img src="/socrates-logo.svg" alt="" /><div>{t("thread.thinking")}</div></div>}
+        {failure && <div className="msg-err">{t("chat.error", { detail: failure })}</div>}
+        <div ref={endRef} />
       </div>
-
-      <div className="chat-layout">
-        <div className="chat-main">
-          <div className="chat-stream" ref={listRef}>
-            <div className="msg bot">
-              <div className="av"><Icon name="sparkle" /></div>
-              <div className="bubble">{t("chat.greeting")}</div>
-            </div>
-            {messages.map((m, i) =>
-              m.role === "assistant" ? (
-                <div key={i} className="msg bot">
-                  <div className="av"><Icon name="sparkle" /></div>
-                  <div className="bubble">
-                    {m.content || <span style={{ opacity: 0.4 }}>{t("common.thinking")}</span>}
-                  </div>
-                </div>
-              ) : (
-                <div key={i} className="msg me">
-                  <div className="av">{initials}</div>
-                  <div className="bubble">{m.content}</div>
-                </div>
-              )
-            )}
-            {busy && (
-              <div className="msg bot">
-                <div className="av"><Icon name="sparkle" /></div>
-                <div className="bubble"><span style={{ opacity: 0.4 }}>{t("common.thinking")}</span></div>
-              </div>
-            )}
-          </div>
-
-          <div className="chat-foot">
-            <div className="chips">
-              {msgs.chat.suggest.map((c) => (
-                <button
-                  key={c}
-                  className="chip"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void sendText(c)}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-            <form className="composer" onSubmit={send}>
-              <textarea
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKeyDown}
-                placeholder={t("chat.placeholder")}
-                disabled={busy}
-              />
-              <button className="send" type="submit" disabled={!input.trim() || busy}>
-                <Icon name="send" />
-              </button>
-            </form>
-          </div>
-        </div>
-
-        <aside className="chat-aside">
-          <div className="aside-sec">
-            <h4>{t("chat.yourTools")}</h4>
-            {(tools.length ? tools : ["ChatGPT", "Claude", "Perplexity", "Notion AI"]).map((tool, i) => (
-              <div className="aside-tool" key={tool + i}>
-                <ToolLogo
-                  name={tool}
-                  className="lg"
-                  fallbackStyle={{
-                    background: `linear-gradient(135deg, ${TOOL_GRADIENTS[i % TOOL_GRADIENTS.length][0]}, ${TOOL_GRADIENTS[i % TOOL_GRADIENTS.length][1]})`,
-                  }}
-                />
-                <span className="nm">{tool}</span>
-              </div>
-            ))}
-          </div>
-          <div className="aside-sec">
-            <h4>{t("chat.recentTopics")}</h4>
-            {msgs.chat.recentTopicsList.map((topic) => (
-              <div className="aside-topic" key={topic}>{topic}</div>
-            ))}
-          </div>
-        </aside>
+      <div className="bottom">
+        <AskBox onAsk={send} onStartCoaching={onStartCoaching} autoFocus disabled={busy} />
       </div>
-    </>
+    </div>
   );
 }

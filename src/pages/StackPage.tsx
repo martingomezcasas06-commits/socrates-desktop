@@ -1,271 +1,35 @@
-import { useEffect, useMemo, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabase";
-import Icon from "../Icon";
-import ToolLogo from "../components/ToolLogo";
+/** My stack: the tools approved for you, with their real logos and why each was approved. */
 import { useT } from "../i18n";
+import { useOverview } from "../lib/overview";
+import ToolLogo from "../components/ToolLogo";
+import { openExternal } from "../lib/openExternal";
 
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const WEB_APP_URL = import.meta.env.VITE_API_URL as string;
-
-/** Open a URL in the system browser. Inside Tauri, a plain target="_blank" does nothing —
- *  the webview swallows it — so route through the shell plugin instead. */
-async function openExternal(url: string) {
-  if (IS_TAURI) {
-    try {
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(url);
-      return;
-    } catch { /* fall through to browser */ }
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
-}
-
-const ALL = "\u0000all";
-
-type Rec = {
-  id: string;
-  tool_name: string;
-  tool_category: string;
-  tool_url: string | null;
-  use_case: string;
-  estimated_impact: "high" | "medium" | "low";
-};
-
-/** Per-language text (migration 019): { en: {...}, es: {...} }. Missing = show the original. */
-type Translations = Record<string, Partial<Pick<Rec, "tool_category" | "use_case">> | undefined>;
-
-/** Stable per-tool gradient derived from the tool name (real tools have no brand colors). */
-function toolHue(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return h % 360;
-}
-function toolGradient(name: string): string {
-  const H = toolHue(name);
-  return `linear-gradient(135deg, hsl(${H} 60% 45%), hsl(${H} 65% 30%))`;
-}
-
-export default function StackPage({
-  session,
-  onStartCoaching,
-}: {
-  session: Session;
-  onStartCoaching: (tool: string) => void;
-}) {
-  const { t, locale } = useT();
-  const [rawRecs, setRawRecs] = useState<Rec[]>([]);
-  const [translations, setTranslations] = useState<Record<string, Translations | null>>({});
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  // ALL is a sentinel, not a label: a category could be called "All" / "Todas".
-  const [activeFilter, setActiveFilter] = useState<string>(ALL);
-
-  useEffect(() => {
-    async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-
-      // Get the Socrates user profile to find their user_id
-      const { data: profile } = await supabase
-        .from("users")
-        .select("id")
-        .eq("auth_id", user.id)
-        .single();
-
-      if (!profile) {
-        setLoading(false);
-        return;
-      }
-
-      const { data } = await supabase
-        .from("recommendations")
-        .select("id, tool_name, tool_category, tool_url, use_case, estimated_impact")
-        .eq("user_id", profile.id)
-        .eq("status", "approved")
-        .order("estimated_impact", { ascending: false });
-
-      const rows = (data ?? []) as Rec[];
-      setRawRecs(rows);
-      setLoading(false);
-
-      // Separate query, so the list still loads where migration 019 isn't applied.
-      if (rows.length) {
-        const { data: tr, error } = await supabase
-          .from("recommendations")
-          .select("id, translations")
-          .in("id", rows.map((r) => r.id));
-        if (!error && tr) setTranslations(Object.fromEntries(tr.map((x) => [x.id as string, x.translations as Translations | null])));
-      }
-    }
-    // session.access_token is available for any authed backend fetch (matches ChatPage pattern):
-    //   Authorization: `Bearer ${session.access_token}`
-    void session;
-    load();
-  }, [session]);
-
-  // The text in the current language, where a translation exists.
-  const recs = useMemo(() => rawRecs.map((r) => {
-    const tr = translations[r.id]?.[locale];
-    return tr ? { ...r, tool_category: tr.tool_category || r.tool_category, use_case: tr.use_case || r.use_case } : r;
-  }), [rawRecs, translations, locale]);
-
-  // Category names change with the language, so a selected one would match nothing.
-  useEffect(() => setActiveFilter(ALL), [locale]);
-
-  // Static-ish pill filters: "All" plus the first few distinct categories from the user's stack.
-  const filters = useMemo(() => {
-    const cats: string[] = [];
-    for (const r of recs) {
-      if (r.tool_category && !cats.includes(r.tool_category)) cats.push(r.tool_category);
-    }
-    return [ALL, ...cats.slice(0, 4)];
-  }, [recs]);
-
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return recs.filter((r) => {
-      const matchesFilter = activeFilter === ALL || r.tool_category === activeFilter;
-      const matchesQuery =
-        !q ||
-        r.tool_name.toLowerCase().includes(q) ||
-        r.tool_category.toLowerCase().includes(q) ||
-        r.use_case.toLowerCase().includes(q);
-      return matchesFilter && matchesQuery;
-    });
-  }, [recs, query, activeFilter]);
-
-  if (loading) {
-    return (
-      <>
-        <div className="head">
-          <div className="titles">
-            <h1>{t("stack.titleBefore")}<span className="ital">{t("stack.titleAccent")}</span></h1>
-            <div className="sub">{t("stack.loading")}</div>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  if (recs.length === 0) {
-    return (
-      <div className="scroll">
-        <div className="head">
-          <div className="titles">
-            <h1>{t("stack.titleBefore")}<span className="ital">{t("stack.titleAccent")}</span></h1>
-            <div className="sub">{t("stack.emptySub")}</div>
-          </div>
-        </div>
-        <div className="empty-rich anim">
-          <div className="empty-ill">
-            <div className="ring" />
-            <div className="core"><Icon name="stack" /></div>
-          </div>
-          <h3>{t("stack.emptyTitleBefore")}<span className="ital">{t("stack.emptyTitleAccent")}</span></h3>
-          <p>{t("stack.emptyBody")}</p>
-          <div className="empty-steps">
-            <div className="empty-step">
-              <span className="n">01</span>
-              <span className="tx"><b>{t("stack.step1Title")}</b>{t("stack.step1Body")}</span>
-            </div>
-            <div className="empty-step">
-              <span className="n">02</span>
-              <span className="tx"><b>{t("stack.step2Title")}</b>{t("stack.step2Body")}</span>
-            </div>
-            <div className="empty-step">
-              <span className="n">03</span>
-              <span className="tx"><b>{t("stack.step3Title")}</b>{t("stack.step3Body")}</span>
-            </div>
-          </div>
-          <button
-            className="btn btn-soft btn-block"
-            onClick={() => openExternal(WEB_APP_URL)}
-          >
-            <Icon name="open" /> {t("stack.openWeb")}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
+export default function StackPage() {
+  const { t } = useT();
+  const { data, loading } = useOverview();
+  const tools = data?.tools ?? [];
   return (
-    <>
-      <div className="head">
-        <div className="titles">
-          <h1>{t("stack.titleBefore")}<span className="ital">{t("stack.titleAccent")}</span></h1>
-          <div className="sub">{t("stack.approvedCount", { count: recs.length })}</div>
-        </div>
-        <div className="tools">
-          <div className="search">
-            <Icon name="search" />
-            <input
-              placeholder={t("stack.search")}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="head" style={{ paddingTop: 0, paddingBottom: 10 }}>
-        <div className="pill-filter">
-          {filters.map((f) => (
-            <button
-              key={f}
-              className={`pill${activeFilter === f ? " active" : ""}`}
-              onClick={() => setActiveFilter(f)}
-            >
-              {f === ALL ? t("stack.all") : f}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="scroll">
-        <div className="stack-grid anim">
-          {visible.map((rec) => (
-            <div key={rec.id} className="tool-card">
-              <div className="tool-top">
-                <ToolLogo
-                  name={rec.tool_name}
-                  className="tool-logo"
-                  fallbackStyle={{ background: toolGradient(rec.tool_name) }}
-                />
-                <div className="tt">
-                  <div className="nm">{rec.tool_name}</div>
-                  <div className="ct">{rec.tool_category}</div>
-                </div>
-                <span className="badge approved"><span className="dot" />{t("stack.approved")}</span>
-              </div>
-              <div className="tool-use">{rec.use_case}</div>
-              <div className="tool-actions">
-                {rec.tool_url ? (
-                  <button
-                    className="btn btn-soft btn-sm"
-                    onClick={() => openExternal(rec.tool_url!)}
-                  >
-                    <Icon name="open" /> {t("stack.open")}
-                  </button>
-                ) : (
-                  <button className="btn btn-soft btn-sm" disabled>
-                    <Icon name="open" /> {t("stack.open")}
-                  </button>
-                )}
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={() => onStartCoaching(rec.tool_name)}
-                >
-                  <Icon name="coach" /> {t("stack.coachMe")}
-                </button>
-              </div>
+    <div className="pg">
+      <span className="ey">{t("stack.eyebrow")}</span>
+      <h1 className="t">{t("stack.pageTitle")}</h1>
+      <div style={{ marginTop: 28 }}>
+        {loading && !data && <p className="sub">{t("stack.loading")}</p>}
+        {data && !tools.length && <p className="sub">{t("stack.emptyBody")}</p>}
+        {tools.map((tool) => (
+          <div className="row tall" key={tool.id}>
+            <ToolLogo name={tool.tool_name} className="lg" />
+            <div>
+              <b>{tool.tool_name}</b>
+              <small>{tool.tool_category}</small>
+              <p>{tool.reason}</p>
             </div>
-          ))}
-        </div>
+            <div className="end">
+              {tool.tool_url && <button className="nbtn gh sm" onClick={() => void openExternal(tool.tool_url!)}>{t("stack.open")}</button>}
+              <span className="tag ok">{t("stack.readyToUse")}</span>
+            </div>
+          </div>
+        ))}
       </div>
-    </>
+    </div>
   );
 }

@@ -17,6 +17,7 @@ import { vlog } from "../lib/vlog";
 import { freshToken, localeHeader } from "../lib/api";
 import { useSmoothText } from "../lib/useSmoothText";
 import { useT } from "../i18n";
+import { COMPANION_W, companionHeight, readCollapsed, saveCollapsed } from "../lib/companion";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -32,15 +33,6 @@ const SILENCE_MS_SHORT = 420;   // utterances under ~3.5s
 const SILENCE_MS_LONG = 850;    // utterances past LONG_SPEECH_MS
 const LONG_SPEECH_MS = 3500;
 const MIN_UTTERANCE_MS = 350; // ignore blips shorter than this
-// The design system's coaching panel. The design draws it at 288 wide, but that
-// assumes its single ✕ — we carry mute and expand too, and at 288 those ate the
-// text column until both the title and the mono line ellipsised. 348 is the
-// width at which the design's own strings fit whole. Height hugs the panel: it
-// measures 71px normally and 98px with a two-line warning, so 100 is snug with
-// nothing clipped.
-export const ORB_W = 348, ORB_H = 100;
-export const EXP_W = 384, EXP_H = 540; // expanded chat view
-
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
@@ -119,12 +111,8 @@ export default function VoiceSession({
   const [youSaid, setYouSaid] = useState("");       // last thing you said
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");      // e.g. screen-recording not granted
-  const [muted, setMuted] = useState(false);
-  const [level, setLevel] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [transcript, setTranscript] = useState<Turn[]>([]);
-  const [typed, setTyped] = useState("");
-  const feedRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [, setTranscript] = useState<Turn[]>([]);
   const capRef = useRef<HTMLDivElement>(null);   // caption viewport, follows the newest line
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -249,7 +237,6 @@ export default function VoiceSession({
       }
       const data = await res.json() as { reply: string; level?: string };
       const reply = (data.reply ?? "").trim();
-      if (data.level) setLevel(data.level);
       if (reply) {
         pushTurn({ role: "assistant", content: reply });
         if (taughtRef.current[taughtRef.current.length - 1] !== reply) taughtRef.current = [...taughtRef.current, reply].slice(-8);
@@ -360,7 +347,7 @@ export default function VoiceSession({
     vlog('CLASSIC: mounting (engine=old pipeline — realtime was unavailable) reason=' + (fallbackReason || 'unknown'));
     let cancelled = false;
     (async () => {
-      await floatWindow(ORB_W, ORB_H);
+      await floatWindow(COMPANION_W, companionHeight(readCollapsed()));
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
@@ -413,27 +400,11 @@ export default function VoiceSession({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function toggleMute() {
-    const next = !mutedRef.current;
-    mutedRef.current = next; setMuted(next);
-    if (next) { stopRecording(); }
-  }
-
-  async function toggleExpand() {
-    const next = !expanded;
-    setExpanded(next);
-    await floatWindow(next ? EXP_W : ORB_W, next ? EXP_H : ORB_H);
-  }
-
-  // Type instead of talking (works alongside the live mic).
-  async function sendTyped(e: React.FormEvent) {
-    e.preventDefault();
-    const text = typed.trim();
-    if (!text || busyRef.current) return;
-    setTyped(""); setYouSaid(text);
-    setCaption(""); setReveal(0);
-    pushTurn({ role: "user", content: text });
-    await takeTurn("turn");
+  async function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    saveCollapsed(next);
+    await floatWindow(COMPANION_W, companionHeight(next));
   }
 
   // Follow the newest caption line as it reveals.
@@ -441,11 +412,6 @@ export default function VoiceSession({
     const el = capRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [shownCaption]);
-
-  // Keep the transcript scrolled to the latest line in expanded view.
-  useEffect(() => {
-    if (expanded && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [transcript, expanded, status]);
 
   async function end() {
     aliveRef.current = false;
@@ -459,72 +425,34 @@ export default function VoiceSession({
     onEnd();
   }
 
-  const statusHead = (
-    <>
-      <span className={`vo-dot ${status}`} />
-      <span className="vo-status">
-        <span className="vo-status-text">{t(`voice.status.${status}`)}</span>
-        {level && <span className="vo-lvl">{t(level === "new" ? "voice.levelShort.new" : level === "learning" ? "voice.levelShort.learning" : "voice.levelShort.confident")}</span>}
-        {/* This engine only runs when the realtime call couldn't connect. Say so —
-            a silent downgrade made a broken call look like a broken product. */}
-        <span
-          className="vo-lvl vo-lvl-warn"
-          title={
-            fallbackReason
-              ? `${t("voice.classicTitle")}.\n${fallbackReason}`
-              : t("voice.classicTitle")
-          }
-        >
-          {t("voice.classic")}
-        </span>
-      </span>
-      <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? t("voice.unmute") : t("voice.mute")}>
-        <Icon name={muted ? "eye" : "coach"} />
-      </button>
-      <button className="vo-btn" onClick={toggleExpand} title={expanded ? t("voice.shrinkOrb") : t("voice.openChat")}>
-        <Icon name={expanded ? "pop" : "chat"} />
-      </button>
-      <button className="vo-btn end" onClick={end} title={t("voice.endCall")}><Icon name="stop" /></button>
-    </>
-  );
-
-  if (expanded) {
-    return (
-      <div className="voice-exp">
-        <div className="ve-head">{statusHead}</div>
-        <div className="ve-feed" ref={feedRef}>
-          {warn && <div className="vo-warn" style={{ marginBottom: 8 }}>{warn}</div>}
-          {transcript.length === 0 && !error && <div className="ve-empty">{t("voice.emptyFeed")}</div>}
-          {transcript.map((m, i) => (
-            <div key={i} className={`ve-msg ${m.role}`}>{m.content}</div>
-          ))}
-          {error && <div className="ve-err">{error}</div>}
-        </div>
-        <form className="ve-input" onSubmit={sendTyped}>
-          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={t("voice.typePlaceholder")} />
-          <button type="submit" className="send-sm" disabled={!typed.trim()}><Icon name="send" /></button>
-        </form>
-      </div>
-    );
-  }
+  // Same strip as the realtime call. This engine only runs when the realtime
+  // call couldn't connect, and the meta line says so: a silent downgrade made a
+  // broken call look like a broken product.
+  const meta = [tool, t("voice.classic")].join(" · ");
+  const line = error || warn || shownCaption
+    || (status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi"));
+  const lineTone = error ? "bad" : warn ? "warn" : undefined;
 
   return (
-    <div className="voice-orb">
-      <div className="vo-top">{statusHead}</div>
-      {error ? (
-        <div className="vo-cap"><p className="vo-cap-line vo-cap-err">{error}</p></div>
-      ) : shownCaption ? (
-        <div className="vo-cap" aria-live="polite" ref={capRef}>
-          <p className="vo-cap-line">{shownCaption}</p>
+    <div className={`cstrip${collapsed ? " min" : ""}`}>
+      <div className="ptop">
+        <span className="pmk" aria-hidden="true"><img src="/socrates-logo.svg" alt="" /></span>
+        <div className="pst" title={fallbackReason ? `${t("voice.classicTitle")}.\n${fallbackReason}` : t("voice.classicTitle")}>
+          <b>{t(`voice.title.${status}`)}</b>
+          <span className="warn">{meta}</span>
         </div>
-      ) : (
-        <div className="vo-cap vo-cap-soft">
-          <p className="vo-cap-line">
-            {status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi")}
-          </p>
+        <button className="pi tog" onClick={() => void toggleCollapsed()} title={collapsed ? t("companion.showTranscript") : t("companion.hideTranscript")}>
+          <Icon name="chevronUp" />
+        </button>
+        <button className="pi stop" onClick={() => void end()} title={t("companion.end")}>
+          <Icon name="x" />
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="psaid" aria-live="polite" ref={capRef}>
+          <p className={lineTone}>{line}</p>
         </div>
       )}
-      {warn && <div className="vo-warn">{warn}</div>}
     </div>
   );
 }

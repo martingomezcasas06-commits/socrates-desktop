@@ -8,22 +8,24 @@ import AuthPage from "./pages/AuthPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import StackPage from "./pages/StackPage";
 import ChatPage from "./pages/ChatPage";
+import ChatsPage from "./pages/ChatsPage";
 import CoachingPage from "./pages/CoachingPage";
-import Icon from "./Icon";
+import HomePage from "./pages/HomePage";
+import HistoryPage from "./pages/HistoryPage";
+import SettingsPage from "./pages/SettingsPage";
+import Sidebar from "./components/Sidebar";
 import { checkAndInstall, restartIntoUpdate, type UpdateState } from "./lib/updates";
-import { LocaleProvider, LanguageSwitch, useT } from "./i18n";
+import { LocaleProvider, useT } from "./i18n";
 import type { MessageKey } from "./i18n/en";
+import OverviewProvider from "./components/OverviewProvider";
+import type { ApprovedTool } from "./lib/overview";
+import { createChat, requestReply } from "./lib/chats";
 
-export type Page = "stack" | "chat" | "coaching";
+export type Page = "home" | "coaching" | "chats" | "chat" | "stack" | "history" | "settings";
 
 /** A deep-link failure, kept untranslated so a language switch re-renders it. */
 type LinkError = { key: MessageKey; vars?: Record<string, string> } | null;
 
-function initialsOf(s: string): string {
-  const base = s.includes("@") ? s.split("@")[0].replace(/[._-]/g, " ") : s;
-  const p = base.trim().split(/\s+/);
-  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "S";
-}
 function displayName(s: string): string {
   if (!s.includes("@")) return s;
   return s.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -38,8 +40,6 @@ export default function App() {
   const [session, setSession]         = useState<Session | null>(null);
   const [loading, setLoading]         = useState(true);
   const [recovering, setRecovering]   = useState(false); // PASSWORD_RECOVERY flow
-  const [page, setPage]               = useState<Page>("stack");
-  const [coachingTool, setCoachingTool] = useState<string>("");
   const [deepLinkError, setDeepLinkError] = useState<LinkError>(null);
   const [deepLinkRaw, setDeepLinkRaw]     = useState<string>("");
   const [update, setUpdate]               = useState<UpdateState>({ status: "idle" });
@@ -64,10 +64,9 @@ export default function App() {
       } else if (event === "USER_UPDATED") {
         setRecovering(false);
       } else if (event === "SIGNED_IN") {
-        // Re-pin the window after OAuth sign-in (which temporarily unpins it)
-        const win = getCurrentWindow();
-        win.setAlwaysOnTop(true).catch(console.error);
-        win.setFocus().catch(console.error);
+        // Bring the app forward after a browser sign-in. It is an ordinary window
+        // now: only the coaching call strip floats above other apps.
+        if ("__TAURI_INTERNALS__" in window) getCurrentWindow().setFocus().catch(console.error);
       }
     });
 
@@ -110,11 +109,6 @@ export default function App() {
     };
   }, []);
 
-  function startCoaching(toolName: string) {
-    setCoachingTool(toolName);
-    setPage("coaching");
-  }
-
   return (
     <LocaleProvider signedIn={!!session}>
       {loading ? (
@@ -127,10 +121,9 @@ export default function App() {
         // Password-reset deep link was clicked — show the set-new-password screen
         <ResetPasswordPage />
       ) : (
-        <Shell
-          session={session} page={page} setPage={setPage} update={update}
-          coachingTool={coachingTool} onStartCoaching={startCoaching}
-        />
+        <OverviewProvider>
+          <Shell session={session} update={update} />
+        </OverviewProvider>
       )}
     </LocaleProvider>
   );
@@ -146,43 +139,56 @@ function SignedOut({ deepLinkError, deepLinkRaw }: { deepLinkError: LinkError; d
   );
 }
 
-function Shell({ session, page, setPage, update, coachingTool, onStartCoaching }: {
-  session: Session; page: Page; setPage: (p: Page) => void; update: UpdateState;
-  coachingTool: string; onStartCoaching: (tool: string) => void;
-}) {
-  const { t } = useT();
+/** Where the app is: the page, the open chat (if any), and the coaching call asked for. */
+type Nav = {
+  page: Page;
+  chatId: string | null;
+  /** The tool a coaching session was started for, from Home or the popover. */
+  coachTool: ApprovedTool | null;
+  coachRequest: number;
+};
+
+function Shell({ session, update }: { session: Session; update: UpdateState }) {
   const email = session.user.email ?? "";
   const name = (session.user.user_metadata?.name as string) || displayName(email);
+  const owner = session.user.id;
+  const [nav, setNav] = useState<Nav>({ page: "home", chatId: null, coachTool: null, coachRequest: 0 });
+
+  const go = (page: Page) => setNav((n) => ({ ...n, page, chatId: page === "chat" ? n.chatId : null }));
+  const openChat = (id: string) => setNav((n) => ({ ...n, page: "chat", chatId: id }));
+  const newChat = () => setNav((n) => ({ ...n, page: "chat", chatId: null }));
+  const ask = (text: string) => {
+    const chat = createChat(owner, text);
+    setNav((n) => ({ ...n, page: "chat", chatId: chat.id }));
+    void requestReply(owner, chat.id);
+  };
+  const startCoaching = (tool: ApprovedTool) =>
+    setNav((n) => ({ ...n, page: "coaching", coachTool: tool, coachRequest: n.coachRequest + 1 }));
 
   return (
-    <div className="app-body">
+    <div className="night">
       <UpdateBar state={update} />
-      <aside className="rail">
-        <div className="rail-brand"><span className="brand-mark" /><span className="nm">Socrates</span></div>
-        <div className="rail-section"><span>{t("rail.workspace")}</span></div>
-        <nav className="rail-nav">
-          <RailLink id="stack" label={t("rail.stack")} icon="stack" page={page} onNav={setPage} />
-          <RailLink id="chat" label={t("rail.chat")} icon="chat" page={page} onNav={setPage} />
-          <RailLink id="coaching" label={t("rail.coaching")} icon="coach" page={page} onNav={setPage} pip={page !== "coaching"} />
-        </nav>
-        <div className="rail-foot">
-          <LanguageSwitch className="rail-lang" />
-          <div className="rail-user">
-            <div className="avatar">{initialsOf(name || email)}</div>
-            <div className="meta">
-              <div className="nm">{name}</div>
-              <div className="rl">{email}</div>
-            </div>
-            <button className="out" onClick={() => supabase.auth.signOut()} title={t("rail.signOut")}><Icon name="logout" /></button>
-          </div>
-        </div>
-      </aside>
-
-      <div className="content">
-        {page === "stack" && <StackPage session={session} onStartCoaching={onStartCoaching} />}
-        {page === "chat" && <ChatPage session={session} />}
-        {page === "coaching" && <CoachingPage session={session} initialTool={coachingTool} />}
-      </div>
+      <Sidebar
+        page={nav.page} chatId={nav.chatId} owner={owner} fallbackName={name}
+        onNav={go} onOpenChat={openChat} onNewChat={newChat}
+      />
+      <main className="nmain">
+        {nav.page === "home" && <HomePage fallbackName={name} onAsk={ask} onStartCoaching={startCoaching} />}
+        {nav.page === "chat" && (
+          <ChatPage
+            key={nav.chatId ?? "new"} owner={owner} chatId={nav.chatId}
+            onAsk={ask}
+            onStartCoaching={startCoaching}
+          />
+        )}
+        {nav.page === "chats" && <ChatsPage owner={owner} onOpenChat={openChat} onNewChat={newChat} />}
+        {nav.page === "coaching" && (
+          <CoachingPage key={nav.coachRequest} session={session} requested={nav.coachTool} />
+        )}
+        {nav.page === "stack" && <StackPage />}
+        {nav.page === "history" && <HistoryPage />}
+        {nav.page === "settings" && <SettingsPage email={email} fallbackName={name} />}
+      </main>
     </div>
   );
 }
@@ -214,15 +220,5 @@ function UpdateBar({ state }: { state: UpdateState }) {
         {t("update.restart")}
       </button>
     </div>
-  );
-}
-
-function RailLink({ id, label, icon, page, onNav, pip }: {
-  id: Page; label: string; icon: string; page: Page; onNav: (p: Page) => void; pip?: boolean;
-}) {
-  return (
-    <button className={`rail-link${page === id ? " active" : ""}`} onClick={() => onNav(id)}>
-      <Icon name={icon} /><span>{label}</span>{pip && <span className="pip" />}
-    </button>
   );
 }

@@ -1,0 +1,203 @@
+/* ── Night: the desktop app shell and pages (handoff 2026-10-16) ─────────────
+   Translated from the design's Desktop Night.html prototype. Tokens are in
+   desktop.css. Class names that clash with the older screens' stylesheet are
+   distinct here: .nbtn (buttons), .tmsg (chat messages), .nsend, .cstrip.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.night { height: 100vh; display: flex; background: var(--bg); color: var(--ink); font-family: var(--font-ui); -webkit-font-smoothing: antialiased; }
+.night p, .night h1, .night h2, .night h3 { margin: 0; }
+.night h1, .night h2, .night h3 { font-family: var(--font-ui); }
+.nmain { flex: 1; min-width: 0; position: relative; overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
+.nmain::-webkit-scrollbar { width: 8px; }
+.nmain::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 8px; }
+
+/* During a call the window is the strip alone; during live text coaching it is that panel. */
+.night:has(.cstrip) .sidewrap,
+.night:has(.coach-live) .sidewrap { display: none; }
+.night:has(.cstrip) .nmain { overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidewrap { width: var(--side-w); flex-shrink: 0; position: relative; z-index: 6; transition: width .2s; }
+.sidewrap.pinned { width: var(--side-w-open); }
+.side { position: absolute; top: 0; bottom: 0; left: 0; width: var(--side-w-open); background: var(--side-bg); border-right: 1px solid rgba(255,255,255,.07); display: flex; flex-direction: column; padding: 12px 10px 12px; transition: width .18s ease; overflow: hidden; }
+.sidewrap:not(.pinned) .side:not(.mini) { box-shadow: 12px 0 40px -12px rgba(0,0,0,.6); }
+.side.mini { width: var(--side-w); padding: 12px 8px; }
+.side .brand { display: flex; align-items: center; gap: 9px; padding: 6px 10px 14px; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.side .brand img { width: 20px; height: 20px; flex-shrink: 0; }
+.side .col { margin-left: auto; width: 26px; height: 26px; border: 0; background: none; color: rgba(255,255,255,.55); border-radius: 5px; display: grid; place-items: center; cursor: pointer; flex-shrink: 0; }
+.side .col:hover { background: rgba(255,255,255,.06); color: #fff; }
+.sidewrap.pinned .side .col { color: var(--teal); }
+.side .new { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--r-btn); font: inherit; font-size: 13.5px; color: #fff; border: 1px solid rgba(255,255,255,.12); background: none; cursor: pointer; margin-bottom: 10px; width: 100%; text-align: left; white-space: nowrap; flex-shrink: 0; }
+.side .new:hover { border-color: rgba(255,255,255,.26); }
+.side .navs { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.side .navs::-webkit-scrollbar { display: none; }
+.side .sec { font-size: 11px; color: var(--ink-3); padding: 16px 10px 6px; letter-spacing: .02em; white-space: nowrap; }
+.side .sec.rcs { padding-top: 22px; }
+.side .ni { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--r-btn); font: inherit; font-size: 13.5px; color: rgba(255,255,255,.72); cursor: pointer; border: 0; background: none; width: 100%; text-align: left; position: relative; }
+.side .ni:hover { background: var(--nav-hover); color: #fff; }
+.side .ni.on { background: var(--nav-active); color: #fff; }
+.side .ni svg { width: 16px; height: 16px; stroke-width: 1.6; flex-shrink: 0; }
+.side .ni .tx, .side .new .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.side .ni .ct { margin-left: auto; font-size: 11px; font-family: var(--font-mono); color: var(--ember); }
+.side .ni.rc { height: 30px; font-size: 13px; color: var(--ink-2); }
+.side .ni.rc.on { color: #fff; }
+.side .ni.rc.more { color: var(--teal); }
+.side .me { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px; border: 0; border-top: 1px solid rgba(255,255,255,.07); background: none; color: #fff; font: inherit; font-size: 13px; text-align: left; cursor: pointer; width: 100%; flex-shrink: 0; }
+.side .me .tx { display: flex; flex-direction: column; min-width: 0; }
+.side .me .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side .me small { display: block; font-size: 11.5px; color: rgba(255,255,255,.55); }
+.side .av { width: 26px; height: 26px; border-radius: 50%; background: var(--teal); color: var(--bg); display: grid; place-items: center; font-size: 9.5px; font-weight: 600; flex-shrink: 0; }
+/* Collapsed: icons only, counts on the icon, no labels. */
+.side.mini .tx, .side.mini .sec, .side.mini .ni.rc { display: none; }
+.side.mini .brand { flex-direction: column; gap: 10px; padding: 6px 0 12px; align-items: center; }
+.side.mini .col { margin: 0; }
+.side.mini .new { justify-content: center; padding: 0; border-color: transparent; }
+.side.mini .ni { justify-content: center; padding: 0; }
+.side.mini .ni .ct { position: absolute; top: 4px; right: 6px; margin: 0; font-size: 9px; }
+.side.mini .me { justify-content: center; padding: 10px 0; }
+
+/* ── Shared page bits ── */
+.night .pg { padding: 52px 64px 48px; max-width: 820px; width: 100%; }
+.night .pg-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.night .ey { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--teal); }
+.night .ey.dim { color: var(--ink-2); }
+.night h1.t { font-size: 30px; font-weight: 500; letter-spacing: -.03em; line-height: 1.1; margin-top: 10px; }
+.night .sub { font-size: 14.5px; color: var(--ink-2); margin-top: 8px; }
+.night .lbl { font-size: 12.5px; color: var(--ink-2); margin: 38px 0 8px; }
+.night .row { display: flex; align-items: center; gap: 14px; min-height: 58px; padding: 10px 0; border-bottom: 1px solid var(--hairline); font-size: 14px; }
+.night .row:last-child { border-bottom: 0; }
+.night .row.tall { align-items: flex-start; padding: 18px 0; }
+.night .row > div:not(.end) { min-width: 0; }
+.night .row b { font-weight: 500; display: block; }
+.night .row small { font-size: 12.5px; color: var(--ink-2); display: block; }
+.night .row p { font-size: 13px; line-height: 1.5; color: rgba(255,255,255,.72); margin-top: 4px; max-width: 60ch; }
+.night .row .end { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.night .tag { height: 22px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: var(--r-tag); font-size: 11.5px; border: 1px solid var(--ctl-border); color: rgba(255,255,255,.72); white-space: nowrap; }
+.night .tag.ok { color: var(--green-inline); border-color: var(--green-edge); background: var(--green-soft); }
+.night .tag.wait { color: var(--amber); border-color: var(--amber-edge); background: var(--amber-soft); }
+.night .tag.no { color: var(--red-inline); border-color: var(--red-edge); background: var(--red-soft); }
+.night .card { margin-top: 30px; border: 1px solid rgba(255,255,255,.1); border-radius: var(--r-card); padding: 24px 26px; background: rgba(255,255,255,.02); }
+.night .card h2 { font-size: 22px; font-weight: 500; letter-spacing: -.02em; line-height: 1.25; margin-top: 10px; }
+.night .card-ey { display: flex; align-items: center; gap: 10px; }
+.night .acts { display: flex; gap: 8px; margin-top: 28px; }
+.night .card .acts { margin-top: 20px; }
+.night .kv { display: grid; grid-template-columns: 180px 1fr; font-size: 14px; margin-top: 28px; }
+.night .kv > * { padding: 15px 0; border-bottom: 1px solid var(--hairline); margin: 0; }
+.night .kv dt { color: var(--ink-2); }
+.night .kv-sub { display: block; font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.night .kv-lang { display: inline-flex; }
+.night .note { margin-top: 22px; font-size: 13.5px; color: var(--green-inline); border: 1px solid rgba(79,178,134,.4); background: rgba(79,178,134,.08); border-radius: 8px; padding: 10px 14px; }
+.night .warnbox { margin-top: 22px; font-size: 13.5px; line-height: 1.5; color: var(--amber); border: 1px solid var(--amber-edge); background: var(--amber-soft); border-radius: 8px; padding: 10px 14px; }
+.night .fine { font-size: 12.5px; color: var(--ink-2); margin-top: 16px; }
+.night .linkq { display: inline-block; margin-top: 22px; background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; color: var(--teal); cursor: pointer; }
+.night .linkq:hover { color: #fff; }
+.night .dim { color: var(--ink-2); }
+
+/* Tool mark: two letters on a faint square. Real logos (ToolLogo) use .lg. */
+.night .mk { width: 28px; height: 28px; border-radius: var(--r-btn); display: grid; place-items: center; flex-shrink: 0; font-size: 10px; font-weight: 600; background: rgba(255,255,255,.06); color: var(--teal); }
+.night .mk.sm { width: 24px; height: 24px; font-size: 9px; border-radius: 5px; }
+.night .lg { width: 28px; height: 28px; border-radius: var(--r-btn); display: grid; place-items: center; flex-shrink: 0; overflow: hidden; background: rgba(255,255,255,.06); color: var(--teal); font-size: 11px; font-weight: 600; }
+
+/* Buttons */
+.nbtn { height: 36px; padding: 0 16px; border-radius: var(--r-btn); border: 0; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: background .15s, border-color .15s; white-space: nowrap; }
+.nbtn.sm { height: 30px; padding: 0 12px; }
+.nbtn.go { background: var(--ember); color: var(--on-ember); }
+.nbtn.go:hover { background: var(--ember-hover); }
+.nbtn.gh { background: none; border: 1px solid var(--ctl-border-2); color: #fff; }
+.nbtn.gh:hover { border-color: rgba(255,255,255,.34); }
+.sess .nbtn.go { height: 32px; }
+
+/* ── Home ── */
+.night .home, .night .chat-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 40px 48px; }
+.night .hello { font-size: 30px; font-weight: 500; letter-spacing: -.03em; display: flex; align-items: center; gap: 14px; margin-bottom: 26px; text-align: center; }
+.night .hello img { width: 32px; height: 32px; }
+.night .chat-empty .hello { margin-bottom: 0; }
+.night .chat-empty .sub { margin: 10px 0 26px; text-align: center; }
+.night .home-note { width: 640px; max-width: 100%; margin-top: 14px; font-size: 13px; color: var(--ink-2); text-align: center; }
+
+/* The ask box */
+.night .box { position: relative; width: 640px; max-width: 100%; border: 1px solid var(--ctl-border); background: var(--surface-tint); border-radius: var(--r-box); padding: 16px 16px 12px; }
+.night .box:focus-within { border-color: rgba(255,255,255,.22); }
+.night .box textarea { width: 100%; height: 46px; resize: none; border: 0; outline: 0; background: none; color: #fff; font: inherit; font-size: 15.5px; line-height: 1.45; display: block; }
+.night .box textarea::placeholder { color: var(--ink-3); }
+.night .bt { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.night .cbtn { height: 30px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border-radius: 7px; border: 1px solid rgba(255,255,255,.12); background: none; color: rgba(255,255,255,.8); font: inherit; font-size: 12.5px; cursor: pointer; }
+.night .cbtn:hover { border-color: rgba(143,212,232,.45); color: var(--teal); }
+.night .nsend { width: 32px; height: 32px; border-radius: 8px; background: var(--ember); color: var(--on-ember); display: grid; place-items: center; border: 0; cursor: pointer; flex-shrink: 0; }
+.night .nsend:hover { background: var(--ember-hover); }
+.night .nsend:disabled { opacity: .45; cursor: default; background: var(--ember); }
+.night .nsend svg { width: 16px; height: 16px; stroke-width: 2; }
+
+/* Coaching session popover */
+.night .pop { position: absolute; left: 12px; width: 340px; max-height: 320px; overflow-y: auto; background: var(--pop-bg); border-radius: 10px; box-shadow: var(--shadow-pop); padding: 6px; z-index: 10; }
+.night .pop.up { bottom: calc(100% + 8px); }
+.night .pop.down { top: calc(100% - 4px); }
+.night .pophd { font-size: 11.5px; color: rgba(255,255,255,.55); padding: 8px 10px 6px; }
+.night .pop button { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; border: 0; background: none; color: #fff; font: inherit; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.night .pop button:hover { background: rgba(255,255,255,.06); }
+.night .pop-tx { min-width: 0; flex: 1; }
+.night .pop b { font-weight: 500; font-size: 13px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.night .pop small { font-size: 11.5px; color: rgba(255,255,255,.55); }
+.night .pop .nx { margin-left: auto; font-size: 11px; color: var(--teal); flex-shrink: 0; }
+
+/* Next session strip */
+.night .sess { width: 640px; max-width: 100%; display: flex; align-items: center; gap: 12px; border: 1px solid rgba(143,212,232,.35); background: var(--teal-tint); border-radius: var(--r-sug); padding: 12px 14px; margin-top: 14px; font-size: 13.5px; }
+.night .sess-tx { flex: 1; min-width: 0; }
+.night .sess-tx b { font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.night .sess-tx small { font-size: 12px; color: var(--ink-2); }
+
+/* ── Chat ── */
+.night .sug { width: 640px; max-width: 100%; margin-top: 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.night .sug button { text-align: left; border: 1px solid var(--hairline); border-radius: var(--r-sug); padding: 14px 14px 16px; font: inherit; font-size: 13.5px; line-height: 1.4; color: #fff; background: none; cursor: pointer; }
+.night .sug button:hover { border-color: rgba(255,255,255,.22); }
+.night .sug small { display: block; font-size: 11.5px; color: var(--ink-2); margin-bottom: 8px; }
+.night .chat-live { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 0 40px; }
+.night .thread { width: 640px; max-width: 100%; flex: 1; display: flex; flex-direction: column; gap: 22px; padding: 40px 0 24px; }
+.night .tmsg { font-size: 15px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.night .tmsg.u { align-self: flex-end; background: rgba(255,255,255,.07); padding: 10px 14px; border-radius: 12px; max-width: 80%; }
+.night .tmsg.a { display: flex; gap: 12px; color: rgba(255,255,255,.88); }
+.night .tmsg.a img { width: 22px; height: 22px; margin-top: 2px; flex-shrink: 0; }
+.night .tmsg.pending { color: var(--ink-2); }
+.night .msg-err { font-size: 13.5px; color: var(--red-inline); border: 1px solid var(--red-edge); background: var(--red-soft); border-radius: 8px; padding: 10px 14px; }
+.night .chat-live .bottom { position: sticky; bottom: 0; width: 640px; max-width: 100%; padding: 12px 0 24px; background: var(--bg); }
+
+/* ── Chats ── */
+.night .srch { display: flex; align-items: center; gap: 10px; height: 42px; margin-top: 26px; padding: 0 14px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: var(--surface-tint); }
+.night .srch:focus-within { border-color: rgba(143,212,232,.45); }
+.night .srch svg { color: rgba(255,255,255,.55); flex-shrink: 0; }
+.night .srch input { flex: 1; border: 0; outline: 0; background: none; color: #fff; font: inherit; font-size: 14px; }
+.night .srch input::placeholder { color: rgba(255,255,255,.45); }
+.night .crow { display: flex; align-items: center; gap: 16px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--hairline); color: #fff; font: inherit; padding: 13px 10px; margin: 0 -10px; width: calc(100% + 20px); border-radius: var(--r-btn); cursor: pointer; }
+.night .crow:hover { background: rgba(255,255,255,.04); }
+.night .crow > div { min-width: 0; flex: 1; }
+.night .crow b { font-weight: 500; font-size: 14px; display: block; }
+.night .crow small { font-size: 12.5px; color: rgba(255,255,255,.55); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.night .crow > span { font-size: 12.5px; color: var(--ink-2); opacity: 0; }
+.night .crow:hover > span { opacity: 1; }
+
+/* ── Companion: the call strip, which is the whole window during a call ── */
+.cstrip { position: fixed; inset: 0; overflow: hidden; background: var(--bg); border: 1px solid rgba(255,255,255,.22); border-radius: var(--r-companion); box-shadow: 0 12px 30px -12px rgba(6,10,18,.5); font-family: var(--font-ui); color: #fff; }
+.cstrip .ptop { display: flex; align-items: center; gap: 9px; padding: 7px 6px 7px 10px; }
+.cstrip .pmk { width: 22px; height: 22px; flex-shrink: 0; }
+.cstrip .pmk img { width: 100%; height: 100%; display: block; animation: night-breathe 3.6s ease-in-out infinite; }
+.cstrip .pst { min-width: 0; flex: 1; overflow: hidden; }
+.cstrip .pst b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cstrip .pst span { display: block; font-size: 10.5px; color: var(--teal); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cstrip .pst span.warn { color: var(--amber); }
+.cstrip .vu { display: flex; align-items: center; gap: 2px; height: 14px; flex-shrink: 0; }
+.cstrip .vu i { display: block; width: 2px; height: 100%; border-radius: 99px; background: var(--accent-2); animation: night-vu 1.05s ease-in-out infinite; }
+.cstrip .pi { width: 26px; height: 26px; border-radius: 4px; border: 1px solid transparent; background: none; color: var(--ink-2); display: grid; place-items: center; cursor: pointer; flex-shrink: 0; }
+.cstrip .pi:hover { background: rgba(255,255,255,.07); color: #fff; }
+.cstrip .pi.stop:hover { background: rgba(224,122,78,.14); border-color: rgba(224,122,78,.5); color: var(--ember); }
+.cstrip .pi svg { width: 14px; height: 14px; stroke-width: 1.8; transition: transform .2s; }
+.cstrip.min .pi.tog svg { transform: rotate(180deg); }
+.cstrip .psaid { padding: 0 10px 9px; }
+.cstrip .psaid p { font-size: 12.5px; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(255,255,255,.72); margin: 0; }
+.cstrip .psaid p.warn { color: var(--amber); }
+.cstrip .psaid p.bad { color: var(--red-inline); }
+@keyframes night-breathe { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1); } }
+@keyframes night-vu { 0%, 100% { transform: scaleY(.18); } 50% { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .cstrip .pmk img, .cstrip .vu i { animation: none; }
+  .side, .sidewrap { transition: none; }
+}

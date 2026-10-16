@@ -17,13 +17,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Icon from "../Icon";
-import PlanetOrb from "./PlanetOrb";
 import { vlog } from "../lib/vlog";
 import { apiFetch } from "../lib/api";
 import { VoiceUsage } from "../lib/voiceUsage";
 import { useSmoothText } from "../lib/useSmoothText";
 import { useT } from "../i18n";
-import { floatWindow, restoreWindow, captureScreen, ORB_W, ORB_H, EXP_W, EXP_H } from "./VoiceSession";
+import { floatWindow, restoreWindow, captureScreen } from "./VoiceSession";
+import { COMPANION_W, companionHeight, readCollapsed, saveCollapsed } from "../lib/companion";
 import { fingerprint, screenChanged } from "../lib/screenDiff";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -52,10 +52,13 @@ const MAX_SHOT_B64 = 180_000;
 // No session prop: every request mints its own fresh token via lib/api.
 export default function RealtimeVoiceSession({
   tool,
+  sessionTitle,
   onEnd,
   onFallback,
 }: {
   tool: string;
+  /** What this session is about (the approved use case), shown on the strip. */
+  sessionTitle?: string;
   onEnd: () => void;
   onFallback: (reason: string) => void;
 }) {
@@ -76,18 +79,15 @@ export default function RealtimeVoiceSession({
   const [youSaid, setYouSaid] = useState("");
   const [error, setError] = useState("");
   const [warn, setWarn] = useState("");
-  // The panel's meta line shows elapsed time and whether Socrates can actually
-  // see the screen. screenOk mirrors screenOkRef because a ref cannot re-render.
-  const [elapsed, setElapsed] = useState(0);
+  // The strip's meta line says whether Socrates can actually see the screen.
+  // screenOk mirrors screenOkRef because a ref cannot re-render.
   const [screenOk, setScreenOk] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  // Collapsed hides the transcript line, for people who only want to listen.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
   // True between response.created and response.done — i.e. while Socrates is
   // actually speaking. Drives the live, still-being-written bubble in the chat.
-  const [streaming, setStreaming] = useState(false);
-  const [transcript, setTranscript] = useState<Turn[]>([]);
-  const [typed, setTyped] = useState("");
-  const feedRef = useRef<HTMLDivElement>(null);
+  const [, setStreaming] = useState(false);
+  const [, setTranscript] = useState<Turn[]>([]);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const usageRef = useRef<VoiceUsage | null>(null);  // meters the call; reports to /api/usage/voice
@@ -131,11 +131,6 @@ export default function RealtimeVoiceSession({
   const pendingTimerRef = useRef<number | null>(null);
   const errTimerRef = useRef<number | null>(null);
   const screenOkRef = useRef(false);
-
-  useEffect(() => {
-    const t = setInterval(() => setElapsed((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   const setStatusBoth = (s: Status) => { statusRef.current = s; setStatus(s); };
   const pushTurn = useCallback((t: Turn) => {
@@ -264,7 +259,7 @@ export default function RealtimeVoiceSession({
 
     (async () => {
       vlog('REALTIME: mounting (engine=realtime)');
-      await floatWindow(ORB_W, ORB_H);
+      await floatWindow(COMPANION_W, companionHeight(readCollapsed()));
 
       // 1. Ephemeral key from our server (bumps session count, builds tutor instructions)
       let secret = "";
@@ -558,7 +553,8 @@ export default function RealtimeVoiceSession({
               break;
             case "response.done": {
               const text = assistantTextRef.current.trim();
-              vlog('REALTIME: reply done, ' + text.length + ' chars: "' + text.slice(0, 120) + '"');
+              // Lengths only: the log is a file on disk, and the call promises no stored transcript.
+              vlog('REALTIME: reply done, ' + text.length + ' chars');
               if (text) pushTurn({ role: "assistant", content: text });
               assistantTextRef.current = "";
               activeRespRef.current = null;
@@ -610,9 +606,9 @@ export default function RealtimeVoiceSession({
                 itemPeakRef.current.delete(ev.item_id);
                 if (finalText && isSilentItem(ev.item_id, peak)) {
                   vlog('REALTIME: dropped hallucinated transcript (peak ' +
-                    peak.toFixed(4) + ' < ' + SPEECH_RMS_MIN + '): "' + finalText.slice(0, 60) + '"');
+                    peak.toFixed(4) + ' < ' + SPEECH_RMS_MIN + '), ' + finalText.length + ' chars');
                 } else if (finalText) {
-                  vlog('REALTIME: you said (peak ' + peak.toFixed(3) + '): "' + finalText.slice(0, 120) + '"');
+                  vlog('REALTIME: you said ' + finalText.length + ' chars (peak ' + peak.toFixed(3) + ')');
                   setYouSaid(finalText);
                   upsertUserTurn(ev.item_id, finalText);
                 }
@@ -811,48 +807,12 @@ export default function RealtimeVoiceSession({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function toggleMute() {
-    const next = !muted;
-    setMuted(next);
-    mutedRef.current = next;
-    const track = micRef.current?.getTracks()[0];
-    if (track) track.enabled = !next;
-    vlog('REALTIME: mic ' + (next ? 'MUTED by user' : 'unmuted by user'));
+  async function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    saveCollapsed(next);
+    await floatWindow(COMPANION_W, companionHeight(next));
   }
-
-  async function toggleExpand() {
-    const next = !expanded;
-    setExpanded(next);
-    await floatWindow(next ? EXP_W : ORB_W, next ? EXP_H : ORB_H);
-  }
-
-  function sendTyped(e: React.FormEvent) {
-    e.preventDefault();
-    const text = typed.trim();
-    if (!text) return;
-    setTyped("");
-    setYouSaid(text);
-    pushTurn({ role: "user", content: text });
-    sendScreen();
-    send({
-      type: "conversation.item.create",
-      item: { type: "message", role: "user", content: [{ type: "input_text", text }] },
-    });
-    // Typing is a deliberate interruption. If Socrates is mid-sentence, stop him
-    // and answer what was actually asked instead of queueing behind a reply to
-    // something else — and the cancel is what produces the response.done that
-    // releases the queued create.
-    if (respBusyRef.current) {
-      vlog('REALTIME: typed while replying — cancelling the in-flight response');
-      send({ type: "response.cancel" });
-    }
-    requestResponse();
-  }
-
-  // Follow the conversation, including the line currently being written.
-  useEffect(() => {
-    if (expanded && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [transcript, expanded, status, shownCaption]);
 
   // Keep the ticker pinned to the words being spoken. Depends on the SMOOTHED
   // text, not the raw caption — that is what's actually on screen, and following
@@ -877,94 +837,46 @@ export default function RealtimeVoiceSession({
     onEnd();
   }
 
-  /* The panel follows the design system's CoachingPanel: a 22px mark, a display
-     title over a mono meta line, a VU meter while audio is live, and the
-     controls. Tone colours the meta line — teal normally, amber when something
-     needs attention, red when the call has failed. */
-  const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
-  // Two facts, the way the design writes them: how long we have been going,
-  // and what Socrates can currently see. Nothing else fits on one mono line.
-  const meta =
-    status === "connecting" ? t("voice.metaStarting")
-    : [mmss, status === "listening" ? t("voice.metaYourTurn") : screenOk ? t("voice.metaSharing") : t("voice.metaAudioOnly")]
-        .join(" · ");
-  const tone = error ? "bad" : warn ? "warn" : "ok";
+  /* The companion strip (Night handoff): a breathing mark, the status over one
+     teal line (tool · session · whether Socrates can see the screen), a sound
+     meter while audio is live, collapse and end. Below, one line of what
+     Socrates is saying. Amber or red replace that line when something is wrong. */
+  const sharing = screenOk ? t("voice.metaSharing") : t("voice.metaAudioOnly");
+  const meta = status === "connecting"
+    ? t("voice.metaStarting")
+    : [tool, sessionTitle, sharing].filter(Boolean).join(" · ");
   const live = status === "speaking" || status === "listening";
-
-  const statusHead = (
-    <>
-      <span className={`vo-mark${live ? " live" : ""}`} aria-hidden="true">
-        <PlanetOrb status={status} size={22} />
-      </span>
-      <span className="vo-status">
-        <b className="vo-title">{t(`voice.title.${status}`)}</b>
-        <span className={`vo-meta ${tone}`}>{meta}</span>
-      </span>
-      {live && (
-        <span className="vo-vu" aria-hidden="true">
-          <i /><i /><i /><i /><i /><i />
-        </span>
-      )}
-      <button className={`vo-btn${muted ? " on" : ""}`} onClick={toggleMute} title={muted ? t("voice.unmute") : t("voice.mute")}>
-        <Icon name={muted ? "eye" : "coach"} />
-      </button>
-      <button className="vo-btn" onClick={toggleExpand} title={expanded ? t("voice.shrinkOrb") : t("voice.openChat")}>
-        <Icon name={expanded ? "pop" : "chat"} />
-      </button>
-      <button className="vo-btn end" onClick={end} title={t("voice.endCall")}><Icon name="stop" /></button>
-    </>
-  );
-
-  if (expanded) {
-    return (
-      <div className="voice-exp">
-        <div className="ve-head">{statusHead}</div>
-        <div className="ve-feed" ref={feedRef}>
-          {warn && <div className="vo-warn" style={{ marginBottom: 8 }}>{warn}</div>}
-          {transcript.length === 0 && !streaming && !error && <div className="ve-empty">{t("voice.emptyFeed")}</div>}
-          {transcript.map((m, i) => (
-            <div key={i} className={`ve-msg ${m.role}`}>{m.content}</div>
-          ))}
-          {/* Socrates' words appear HERE as he says them, not in one lump when he
-              finishes. This view used to render only completed turns, so the chat
-              sat empty through an entire spoken reply — the reason the transcript
-              was unreadable in real time. `response.done` moves the finished text
-              into `transcript` and this bubble disappears in the same commit. */}
-          {/* `|| caption` is a safety net: if the smoothing loop is ever starved,
-              show the real text rather than an empty bubble. Readable beats pretty. */}
-          {streaming && (shownCaption || caption) && (
-            <div className="ve-msg assistant live">{shownCaption || caption}</div>
-          )}
-          {error && <div className="ve-err">{error}</div>}
-        </div>
-        <form className="ve-input" onSubmit={sendTyped}>
-          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={t("voice.typePlaceholder")} />
-          <button type="submit" className="send-sm" disabled={!typed.trim()}><Icon name="send" /></button>
-        </form>
-      </div>
-    );
-  }
+  const line = error || warn || shownCaption || caption
+    || (status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi"));
+  const lineTone = error ? " bad" : warn ? " warn" : "";
 
   return (
-    <div className="voice-orb">
-      <div className="vo-top">{statusHead}</div>
-      {error ? (
-        <div className="vo-cap"><p className="vo-cap-line vo-cap-err">{error}</p></div>
-      ) : caption ? (
-        // Captions scroll like real subtitles: text stays put, the view follows the
-        // newest line, and the top edge fades out. No per-word animation — with a
-        // streaming transcript that only made the layout jitter.
-        <div className="vo-cap" aria-live="polite" ref={capRef}>
-          <p className="vo-cap-line">{shownCaption || caption}</p>
+    <div className={`cstrip${collapsed ? " min" : ""}`}>
+      <div className="ptop">
+        <span className="pmk" aria-hidden="true"><img src="/socrates-logo.svg" alt="" /></span>
+        <div className="pst">
+          <b>{t(`voice.title.${status}`)}</b>
+          <span>{meta}</span>
         </div>
-      ) : (
-        <div className="vo-cap vo-cap-soft">
-          <p className="vo-cap-line">
-            {status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi")}
-          </p>
+        {live && (
+          <div className="vu" aria-hidden="true">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <i key={i} style={{ animationDelay: `${(i % 4) * 0.13}s`, opacity: 0.5 + 0.5 * Math.sin((i / 6) * Math.PI) }} />
+            ))}
+          </div>
+        )}
+        <button className="pi tog" onClick={() => void toggleCollapsed()} title={collapsed ? t("companion.showTranscript") : t("companion.hideTranscript")}>
+          <Icon name="chevronUp" />
+        </button>
+        <button className="pi stop" onClick={() => void end()} title={t("companion.end")}>
+          <Icon name="x" />
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="psaid" aria-live="polite" ref={capRef}>
+          <p className={lineTone.trim() || undefined}>{line}</p>
         </div>
       )}
-      {warn && <div className="vo-warn">{warn}</div>}
     </div>
   );
 }
