@@ -18,6 +18,7 @@ import { freshToken, localeHeader } from "../lib/api";
 import { useSmoothText } from "../lib/useSmoothText";
 import { useT } from "../i18n";
 import { COMPANION_W, companionHeight, readCollapsed, saveCollapsed } from "../lib/companion";
+import { MAIN_W, MAIN_H, MIN_W, MIN_H } from "../lib/windowSize";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const API_URL = import.meta.env.VITE_API_URL as string;
@@ -71,8 +72,8 @@ export async function restoreWindow() {
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     const win = getCurrentWindow();
     try { await tauriInvoke("set_fullscreen_overlay", { enable: false }); } catch { /* older build */ }
-    try { await win.setMinSize(new LogicalSize(380, 460)); } catch { /* needs allow-set-min-size */ }
-    await win.setSize(new LogicalSize(980, 700));
+    try { await win.setMinSize(new LogicalSize(MIN_W, MIN_H)); } catch { /* needs allow-set-min-size */ }
+    await win.setSize(new LogicalSize(MAIN_W, MAIN_H));
     await win.center();
   } catch (e) { console.error("restoreWindow", e); }
 }

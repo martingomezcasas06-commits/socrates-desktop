@@ -238,6 +238,26 @@ fn set_noactivate(win: &WebviewWindow, enable: bool) {
     }
 }
 
+/// The main window is an ordinary 1120x700 window (never smaller than 960x640).
+/// Only the coaching companion floats, and only while a session is running.
+const MAIN_W: f64 = 1120.0;
+const MAIN_H: f64 = 700.0;
+const MIN_W: f64 = 960.0;
+const MIN_H: f64 = 640.0;
+
+/// Whether the companion overlay is up (a coaching session is running). The
+/// menu-bar icon must not resize or re-dock the window mid-session.
+static OVERLAY_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The companion is far smaller than the main window's minimum, so lift the
+/// minimum while it floats and put it back afterwards.
+fn set_main_min_size(app: &AppHandle, floating: bool) {
+    if let Some(win) = app.get_webview_window("main") {
+        let min = if floating { None } else { Some(LogicalSize::new(MIN_W, MIN_H)) };
+        let _ = win.set_min_size(min);
+    }
+}
+
 /// Configure the (panel-ified) main window to float **over another app's native-fullscreen
 /// Space** as a non-activating overlay — or restore it to a normal window.
 ///
@@ -256,6 +276,8 @@ fn overlay_panel(
     use tauri_nspanel::cocoa::appkit::NSWindowCollectionBehavior as CB;
     use tauri_nspanel::ManagerExt;
     let Ok(panel) = app.get_webview_panel("main") else { return };
+    OVERLAY_ACTIVE.store(enable, std::sync::atomic::Ordering::SeqCst);
+    set_main_min_size(app, enable);
     // NSWindowStyleMask: Titled(1) | Closable(2) | Miniaturizable(4) | Resizable(8) | NonactivatingPanel(128)
     if enable {
         panel.set_style_mask(1 | 2 | 8 | 128);
@@ -279,7 +301,7 @@ fn overlay_panel(
         panel.set_level(0);
         panel.set_collection_behaviour(CB::empty());
         panel.set_floating_panel(false);
-        panel.set_content_size(980.0, 700.0);
+        panel.set_content_size(MAIN_W, MAIN_H);
         if let Some(win) = app.get_webview_window("main") {
             let _ = win.center();
         }
@@ -299,6 +321,8 @@ fn overlay_panel(
     // tiny voice orb stayed a full-size window), and clicking the overlay stole focus from
     // the app being taught.
     let Some(win) = app.get_webview_window("main") else { return };
+    OVERLAY_ACTIVE.store(enable, std::sync::atomic::Ordering::SeqCst);
+    set_main_min_size(app, enable);
     let _ = win.set_always_on_top(enable);
     let _ = win.set_visible_on_all_workspaces(enable);
 
@@ -314,7 +338,7 @@ fn overlay_panel(
         ));
         position_companion(&win, None);
     } else {
-        let _ = win.set_size(LogicalSize::new(980.0, 700.0));
+        let _ = win.set_size(LogicalSize::new(MAIN_W, MAIN_H));
         let _ = win.center();
     }
 }
@@ -422,14 +446,14 @@ fn tray_labels(locale: &str) -> (&'static str, &'static str, &'static str, &'sta
     if locale.to_ascii_lowercase().starts_with("es") {
         (
             "Abrir Socrates",
-            "Mostrar / ocultar asistente",
+            "Mostrar / ocultar Socrates",
             "Salir de Socrates",
             "Socrates: haz clic para abrir tu coach",
         )
     } else {
         (
             "Open Socrates",
-            "Show / Hide companion",
+            "Show / Hide Socrates",
             "Quit Socrates",
             "Socrates — click to open your coach",
         )
@@ -440,8 +464,8 @@ fn tray_labels(locale: &str) -> (&'static str, &'static str, &'static str, &'sta
 /// so the menu-event handler registered at startup keeps working after a swap.
 fn tray_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: &str) -> tauri::Result<Menu<R>> {
     let (open_l, toggle_l, quit_l, _) = tray_labels(locale);
-    // "Open" is not a duplicate of "toggle": toggle shows the small floating
-    // companion, whereas Open restores the full 980x700 window. Without it, a
+    // "Open" is not a duplicate of "toggle": toggle hides Socrates when it is
+    // showing, whereas Open always brings the full window forward. Without it, a
     // Windows user who closes the window has no way back except the tray icon —
     // which Windows 11 hides in the overflow flyout by default.
     let open = MenuItem::with_id(app, "open", open_l, true, None::<&str>)?;
@@ -491,14 +515,14 @@ fn position_companion(win: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>
     }
 }
 
-/// Show / hide the Socrates companion from the menu-bar icon. When shown it floats
-/// above everything (incl. fullscreen apps) so it can coach without being buried.
-fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
+/// The menu-bar icon shows or hides Socrates. The app itself is an ordinary
+/// window; only the coaching call strip floats over other apps. If a call is
+/// running, its strip is shown as it is (never resized or re-docked).
+fn toggle_companion(app: &AppHandle, _anchor: Option<PhysicalPosition<f64>>) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
     if win.is_visible().unwrap_or(false) {
-        // Already up → tuck it away (panel order_out keeps it non-activating).
         #[cfg(target_os = "macos")]
         {
             use tauri_nspanel::ManagerExt;
@@ -510,10 +534,18 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
         let _ = win.hide();
         return;
     }
-    // Show as a compact floating companion, top-right, over everything (incl. fullscreen).
-    let _ = win.set_size(LogicalSize::new(440.0, 680.0));
-    position_companion(&win, anchor);
-    overlay_panel(app, true, None, None, false);
+    if OVERLAY_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = win.show();
+        #[cfg(target_os = "macos")]
+        {
+            use tauri_nspanel::ManagerExt;
+            if let Ok(panel) = app.get_webview_panel("main") {
+                panel.show(); // order_front_regardless — appears without activating the app
+            }
+        }
+        return;
+    }
+    show_main(app);
 }
 
 /// Bring the full app window back to the front — used when the dock icon is clicked
@@ -521,8 +553,14 @@ fn toggle_companion(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
 /// level/style so it behaves like an ordinary window again, then shows + focuses it.
 fn show_main(app: &AppHandle) {
     let Some(win) = app.get_webview_window("main") else { return };
-    overlay_panel(app, false, None, None, false); // restore normal chrome/level + 980x700
-    let _ = win.set_size(LogicalSize::new(980.0, 700.0));
+    // Mid-call (the strip is floating), just bring it forward: resetting it here
+    // would turn a running call back into the full window.
+    if OVERLAY_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = win.show();
+        return;
+    }
+    overlay_panel(app, false, None, None, false); // restore normal chrome/level + 1120x700
+    let _ = win.set_size(LogicalSize::new(MAIN_W, MAIN_H));
     let _ = win.center();
     let _ = win.show();
     #[cfg(target_os = "macos")]

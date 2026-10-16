@@ -15,6 +15,7 @@ import { apiFetch } from "../lib/api";
 import VoiceSession from "../components/VoiceSession";
 import RealtimeVoiceSession from "../components/RealtimeVoiceSession";
 import { useT } from "../i18n";
+import { MAIN_W, MAIN_H } from "../lib/windowSize";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -57,7 +58,7 @@ async function exitFloating() {
     const win = getCurrentWindow();
     // Restore a normal window (drops overlay level/behaviour + non-activating style).
     try { await tauriInvoke("set_fullscreen_overlay", { enable: false }); } catch { /* older build */ }
-    await win.setSize(new LogicalSize(980, 700));
+    await win.setSize(new LogicalSize(MAIN_W, MAIN_H));
     await win.center();
   } catch (e) { console.error("exitFloating", e); }
 }
@@ -68,7 +69,7 @@ async function expandFloating() {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
     const win = getCurrentWindow();
-    await win.setSize(new LogicalSize(980, 700));
+    await win.setSize(new LogicalSize(MAIN_W, MAIN_H));
     await win.center();
   } catch (e) { console.error("expandFloating", e); }
 }

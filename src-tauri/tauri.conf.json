@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Socrates",
-        "width": 980,
+        "width": 1120,
         "height": 700,
-        "minWidth": 200,
-        "minHeight": 90,
+        "minWidth": 960,
+        "minHeight": 640,
         "resizable": true,
         "alwaysOnTop": false,
         "center": true
