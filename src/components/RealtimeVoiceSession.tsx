@@ -818,9 +818,12 @@ export default function RealtimeVoiceSession({
   // text, not the raw caption — that is what's actually on screen, and following
   // the raw value scrolled ahead of the visible line.
   useEffect(() => {
+    // One line that follows the newest words: older words slide off the left.
     const el = capRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [shownCaption]);
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    el.classList.toggle("over", el.scrollWidth > el.clientWidth + 1); // fade the left edge only when words have slid off it
+  }, [shownCaption, collapsed]);
 
   async function end() {
     aliveRef.current = false;
@@ -840,15 +843,20 @@ export default function RealtimeVoiceSession({
   /* The companion strip (Night handoff): a breathing mark, the status over one
      teal line (tool · session · whether Socrates can see the screen), a sound
      meter while audio is live, collapse and end. Below, one line of what
-     Socrates is saying. Amber or red replace that line when something is wrong. */
+     Socrates is saying, following the words as he says them. A warning turns
+     the teal line amber (hover for the full text) and never hides the words;
+     only a call-ending error replaces them. */
   const sharing = screenOk ? t("voice.metaSharing") : t("voice.metaAudioOnly");
-  const meta = status === "connecting"
-    ? t("voice.metaStarting")
-    : [tool, sessionTitle, sharing].filter(Boolean).join(" · ");
+  const meta = warn
+    ? warn
+    : status === "connecting"
+      ? t("voice.metaStarting")
+      : [tool, sessionTitle, sharing].filter(Boolean).join(" · ");
   const live = status === "speaking" || status === "listening";
-  const line = error || warn || shownCaption || caption
+  const spoken = shownCaption || caption;
+  const line = error || spoken
     || (status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi"));
-  const lineTone = error ? " bad" : warn ? " warn" : "";
+  const lineClass = error ? "bad" : spoken ? "flow" : undefined;
 
   return (
     <div className={`cstrip${collapsed ? " min" : ""}`}>
@@ -856,7 +864,7 @@ export default function RealtimeVoiceSession({
         <span className="pmk" aria-hidden="true"><img src="/socrates-logo.svg" alt="" /></span>
         <div className="pst">
           <b>{t(`voice.title.${status}`)}</b>
-          <span>{meta}</span>
+          <span className={warn ? "warn" : undefined} title={warn || undefined}>{meta}</span>
         </div>
         {live && (
           <div className="vu" aria-hidden="true">
@@ -874,7 +882,7 @@ export default function RealtimeVoiceSession({
       </div>
       {!collapsed && (
         <div className="psaid" aria-live="polite" ref={capRef}>
-          <p className={lineTone.trim() || undefined}>{line}</p>
+          <p className={lineClass}>{line}</p>
         </div>
       )}
     </div>

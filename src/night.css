@@ -191,13 +191,22 @@
 .cstrip .pi.stop:hover { background: rgba(224,122,78,.14); border-color: rgba(224,122,78,.5); color: var(--ember); }
 .cstrip .pi svg { width: 14px; height: 14px; stroke-width: 1.8; transition: transform .2s; }
 .cstrip.min .pi.tog svg { transform: rotate(180deg); }
-.cstrip .psaid { padding: 0 10px 9px; }
+.cstrip .psaid { margin: 0 10px 9px; overflow: hidden; }
 .cstrip .psaid p { font-size: 12.5px; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(255,255,255,.72); margin: 0; }
 .cstrip .psaid p.warn { color: var(--amber); }
 .cstrip .psaid p.bad { color: var(--red-inline); }
+/* The spoken line: no ellipsis; the box scrolls to its end so the newest words
+   stay in view, and older ones fade off the left edge. */
+.cstrip .psaid p.flow { overflow: visible; text-overflow: clip; display: inline-block; min-width: 100%; color: rgba(255,255,255,.82); }
+.cstrip .psaid.over:has(p.flow) { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
 @keyframes night-breathe { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1); } }
 @keyframes night-vu { 0%, 100% { transform: scaleY(.18); } 50% { transform: scaleY(1); } }
 @media (prefers-reduced-motion: reduce) {
   .cstrip .pmk img, .cstrip .vu i { animation: none; }
   .side, .sidewrap { transition: none; }
 }
+
+/* Home: requests waiting on an admin or chief, under the ask box */
+.night .waiting { width: 640px; max-width: 100%; margin-top: 26px; }
+.night .waiting .lbl { margin: 0 0 4px; }
+.night .waiting .row { min-height: 50px; }

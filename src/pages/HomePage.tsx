@@ -1,6 +1,7 @@
 /**
- * Home. For employees: one ask box, a "Coaching session" picker, and the next
- * session. For admins and chiefs: what is waiting on them (reviewed on the web).
+ * Home: one ask box, a "Coaching session" picker, and the next session. Admins
+ * and chiefs have their own tools too, so they get the same Home, with the
+ * requests waiting on them underneath (reviewed on the website).
  */
 import { useEffect, useRef, useState } from "react";
 import Icon from "../Icon";
@@ -26,8 +27,6 @@ export default function HomePage({ fallbackName, onAsk, onStartCoaching }: {
   const name = firstName(data?.user.name || fallbackName);
   const greeting = t(`home.greeting.${greetingKey()}`, { name });
 
-  if (data && data.user.role !== "employee") return <AdminHome greeting={greeting} />;
-
   const next = nextSession(data);
   return (
     <div className="home">
@@ -42,9 +41,10 @@ export default function HomePage({ fallbackName, onAsk, onStartCoaching }: {
           </div>
           <button className="nbtn go sm" onClick={() => onStartCoaching(next)}>{t("home.start")}</button>
         </div>
-      ) : data ? (
+      ) : data && data.user.role === "employee" ? (
         <p className="home-note">{t("home.noToolsYet")}</p>
       ) : null}
+      {data && data.user.role !== "employee" && <Waiting />}
     </div>
   );
 }
@@ -123,30 +123,26 @@ export function AskBox({ onAsk, onStartCoaching, autoFocus, disabled }: {
   );
 }
 
-function AdminHome({ greeting }: { greeting: string }) {
+/** Requests waiting on an admin or chief, under the ask box. */
+function Waiting() {
   const { t } = useT();
   const { data } = useOverview();
   const waiting = data?.waiting ?? [];
+  if (!waiting.length) return null;
   const reviewPath = data?.user.role === "admin" ? "/admin/approvals" : "/chief/approvals";
+  const review = () => void openExternal(`${API_URL}${reviewPath}`);
   return (
-    <div className="pg">
-      <span className="ey">{t("nav.home")}</span>
-      <h1 className="t">{greeting}</h1>
-      <p className="sub">{waiting.length ? t("home.adminSub", { count: waiting.length }) : t("home.adminNone")}</p>
-      {waiting.length > 0 && (
-        <>
-          <div className="lbl">{t("home.waitingOnYou")}</div>
-          {waiting.map((w) => (
-            <div className="row" key={w.id}>
-              <ToolMark name={w.tool_name} />
-              <div><b>{t("home.forPerson", { tool: w.tool_name, person: w.person })}</b></div>
-              <div className="end">
-                <button className="nbtn gh sm" title={t("nav.opensInBrowser", { label: t("home.review") })} onClick={() => void openExternal(`${API_URL}${reviewPath}`)}>{t("home.review")}</button>
-              </div>
-            </div>
-          ))}
-        </>
-      )}
+    <div className="waiting">
+      <div className="lbl">{t("home.waitingOnYou")} · {waiting.length}</div>
+      {waiting.slice(0, 4).map((w) => (
+        <div className="row" key={w.id}>
+          <ToolMark name={w.tool_name} />
+          <div><b>{t("home.forPerson", { tool: w.tool_name, person: w.person })}</b></div>
+          <div className="end">
+            <button className="nbtn gh sm" title={t("nav.opensInBrowser", { label: t("home.review") })} onClick={review}>{t("home.review")}</button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

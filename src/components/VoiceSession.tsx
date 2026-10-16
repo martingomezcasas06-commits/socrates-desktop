@@ -410,9 +410,12 @@ export default function VoiceSession({
 
   // Follow the newest caption line as it reveals.
   useEffect(() => {
+    // One line that follows the newest words: older words slide off the left.
     const el = capRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [shownCaption]);
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    el.classList.toggle("over", el.scrollWidth > el.clientWidth + 1); // fade the left edge only when words have slid off it
+  }, [shownCaption, collapsed]);
 
   async function end() {
     aliveRef.current = false;
@@ -430,9 +433,11 @@ export default function VoiceSession({
   // call couldn't connect, and the meta line says so: a silent downgrade made a
   // broken call look like a broken product.
   const meta = [tool, t("voice.classic")].join(" · ");
-  const line = error || warn || shownCaption
+  // As on the realtime strip: the words follow as they're said, a warning goes
+  // on the amber meta line, and only an error replaces the words.
+  const line = error || shownCaption
     || (status === "connecting" ? t("voice.starting") : youSaid ? `“${youSaid}”` : t("voice.sayHi"));
-  const lineTone = error ? "bad" : warn ? "warn" : undefined;
+  const lineClass = error ? "bad" : shownCaption ? "flow" : undefined;
 
   return (
     <div className={`cstrip${collapsed ? " min" : ""}`}>
@@ -440,7 +445,7 @@ export default function VoiceSession({
         <span className="pmk" aria-hidden="true"><img src="/socrates-logo.svg" alt="" /></span>
         <div className="pst" title={fallbackReason ? `${t("voice.classicTitle")}.\n${fallbackReason}` : t("voice.classicTitle")}>
           <b>{t(`voice.title.${status}`)}</b>
-          <span className="warn">{meta}</span>
+          <span className="warn" title={warn || undefined}>{warn || meta}</span>
         </div>
         <button className="pi tog" onClick={() => void toggleCollapsed()} title={collapsed ? t("companion.showTranscript") : t("companion.hideTranscript")}>
           <Icon name="chevronUp" />
@@ -451,7 +456,7 @@ export default function VoiceSession({
       </div>
       {!collapsed && (
         <div className="psaid" aria-live="polite" ref={capRef}>
-          <p className={lineTone}>{line}</p>
+          <p className={lineClass}>{line}</p>
         </div>
       )}
     </div>
