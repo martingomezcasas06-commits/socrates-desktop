@@ -1,58 +1,92 @@
-  /* ── Socrates desktop — the night ground ────────────────────────────────
-     The desktop window is always a night surface, so these track the design
-     system's [data-theme="dark"] block in tokens/colors.css: pure white ink,
-     teal lifted to the ring colour, ember lifted, status as a hairline plus a
-     ~10% tint, and one radius. See the design project's site/app-desktop.html.
+  /* ── Socrates desktop — "Night" ───────────────────────────────────────
+     Tokens from the Night redesign handoff (2026-10-16). The older names
+     (--surface-2, --ink-dim, --accent…) are kept, mapped onto the new palette,
+     so screens that predate the redesign (sign-in, reset password, the text
+     coaching view) follow it without being rewritten.
      ────────────────────────────────────────────────────────────────────── */
   :root {
+    /* Grounds */
     --bg: #060A12;
-    --surface: #060A12;          /* cards sit on rules, not on a fill */
+    --side-bg: #0B1019;          /* sidebar overlay */
+    --pop-bg: #111824;           /* popovers */
+    --surface: #060A12;
+    --surface-tint: rgba(255, 255, 255, 0.03);
     --surface-2: rgba(255, 255, 255, 0.05);
     --surface-3: rgba(255, 255, 255, 0.07);
-    --surface-hover: rgba(255, 255, 255, 0.07);
+    --surface-hover: rgba(255, 255, 255, 0.05);
+    --nav-active: rgba(255, 255, 255, 0.08);
+    --nav-hover: rgba(255, 255, 255, 0.05);
+
+    /* Ink */
     --ink: #FFFFFF;
+    --ink-2: rgba(255, 255, 255, 0.62);   /* secondary */
+    --ink-3: rgba(255, 255, 255, 0.5);    /* tertiary, placeholders */
     --ink-dim: rgba(255, 255, 255, 0.72);
     --ink-faint: rgba(255, 255, 255, 0.62);
     --ink-ghost: rgba(255, 255, 255, 0.14);
+
+    /* Lines */
+    --hairline: rgba(255, 255, 255, 0.08);
+    --ctl-border: rgba(255, 255, 255, 0.14);
+    --ctl-border-2: rgba(255, 255, 255, 0.16);
+    --hover-border: rgba(255, 255, 255, 0.3);
     --rule: rgba(255, 255, 255, 0.16);
-    --rule-soft: rgba(255, 255, 255, 0.10);
+    --rule-soft: rgba(255, 255, 255, 0.08);
     --rule-strong: rgba(255, 255, 255, 0.30);
 
-    /* On night the accent is the ring colour; white is its hover. */
+    /* Teal: light for eyebrows, links and "next"; dark for the brand body. */
+    --teal: #8FD4E8;
+    --teal-tint: rgba(143, 212, 232, 0.06);
+    --teal-edge: rgba(143, 212, 232, 0.4);
+    --teal-dark: #15637F;
     --accent: #8FD4E8;
     --accent-2: #B6E7F5;
     --accent-hover: #FFFFFF;
     --accent-soft: rgba(143, 212, 232, 0.14);
     --accent-glow: rgba(143, 212, 232, 0.30);
     --on-accent: #060A12;
+
+    /* Ember: actions. */
+    --ember: #E07A4E;
+    --ember-hover: #F0956C;
+    --on-ember: #060A12;
     --warm: #E07A4E;
 
     /* Status: a hairline and a tint, never a fill. */
     --green: #4FB286;
     --green-inline: #6FC79E;
-    --green-soft: rgba(79, 178, 134, 0.12);
+    --green-soft: rgba(79, 178, 134, 0.1);
     --green-edge: rgba(79, 178, 134, 0.45);
     --amber: #E0A458;
     --amber-inline: #E0A458;
-    --amber-soft: rgba(224, 164, 88, 0.12);
-    --amber-edge: rgba(224, 164, 88, 0.50);
+    --amber-soft: rgba(224, 164, 88, 0.1);
+    --amber-edge: rgba(224, 164, 88, 0.45);
     --red: #D96A6A;
     --red-inline: #E58C8C;
-    --red-soft: rgba(217, 106, 106, 0.10);
+    --red-soft: rgba(217, 106, 106, 0.1);
     --red-edge: rgba(217, 106, 106, 0.45);
 
-    /* Three faces, three jobs. Body is Instrument Sans; the display cut is
-       Bricolage, and its italic is the emphasis face — not a serif. */
+    /* Type: Instrument Sans for everything, Space Mono for labels. */
     --font-ui: 'Instrument Sans', system-ui, -apple-system, sans-serif;
-    --font-display: 'Bricolage Grotesque', 'Instrument Sans', system-ui, sans-serif;
-    --font-italic: 'Bricolage Grotesque', 'Instrument Sans', system-ui, sans-serif;
+    --font-display: 'Instrument Sans', system-ui, -apple-system, sans-serif;
+    --font-italic: 'Instrument Sans', system-ui, -apple-system, sans-serif;
     --font-mono: 'Space Mono', ui-monospace, monospace;
 
-    /* One radius. Circles for avatars and dots only. */
+    /* Radii */
+    --r-btn: 6px;
+    --r-card: 12px;
+    --r-box: 16px;
+    --r-sug: 10px;
+    --r-tag: 4px;
+    --r-companion: 6px;
     --r-xs: 3px;
-    --r-sm: 4px; --r-md: 4px; --r-lg: 4px; --r-xl: 4px;
+    --r-sm: 4px; --r-md: 6px; --r-lg: 12px; --r-xl: 16px;
 
-    --rail-w: 68px;
+    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 18px 40px -12px rgba(0, 0, 0, 0.7);
+
+    --side-w: 60px;
+    --side-w-open: 232px;
+    --rail-w: 60px;
     --panel-w: 288px;
   }
 
@@ -63,7 +97,7 @@
      heading in mono (e.g. .aside-sec h4) are more specific and still win. */
   h1, h2, h3, h4 {
     font-family: var(--font-display);
-    font-weight: 700;
+    font-weight: 500;
     letter-spacing: -0.03em;
     line-height: 1.05;
   }
